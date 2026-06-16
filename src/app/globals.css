@@ -1,26 +1,44 @@
 @import "tailwindcss";
 
+@theme {
+  --color-evino-red-50: #FEE7EB;
+  --color-evino-red-100: #FCC2CC;
+  --color-evino-red-200: #F88699;
+  --color-evino-red-300: #F44A66;
+  --color-evino-red-400: #F02E4C;
+  --color-evino-red-500: #ED0E32;
+  --color-evino-red-600: #C00A28;
+  --color-evino-red-700: #92081F;
+  --color-evino-red-800: #640515;
+  --color-evino-red-900: #36030B;
+  --color-evino-red: #ED0E32;
+
+  --color-evino-burgundy-light: #9B2D44;
+  --color-evino-burgundy-dark: #5A1322;
+  --color-evino-burgundy: #7B1A2E;
+
+  --color-evino-ink: #1A1A1A;
+  --color-evino-cream: #F5F1EC;
+  --color-evino-gold: #C8A95C;
+
+  --color-success: #10B981;
+  --color-danger: #EF4444;
+  --color-warning: #F59E0B;
+  --color-info: #3B82F6;
+
+  --font-sans: var(--font-sans), system-ui, sans-serif;
+  --font-display: var(--font-display), var(--font-sans), sans-serif;
+  --font-mono: var(--font-mono), monospace;
+
+  --radius-evino: 8px;
+}
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --background: #FAFAFA;
+  --foreground: #1A1A1A;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
 }

@@ -1,65 +1,44 @@
-import Image from "next/image";
+import { redirect } from 'next/navigation';
+import { listAdAccounts } from '@/lib/meta/accounts';
 
-export default function Home() {
+export const dynamic = 'force-dynamic';
+
+export default async function RootPage() {
+  const accounts = await listAdAccounts();
+  
+  const defaultAccountId = process.env.META_DEFAULT_AD_ACCOUNT_ID;
+  
+  // Se houver uma conta padrão definida nas variáveis de ambiente, usa ela.
+  if (defaultAccountId && accounts.some(acc => acc.id === defaultAccountId)) {
+    redirect(`/${defaultAccountId}`);
+  }
+
+  // Senão, pega a primeira conta retornada pela API
+  if (accounts.length > 0) {
+    redirect(`/${accounts[0].id}`);
+  }
+
+  // Se não houver nenhuma conta configurada e nem token da Meta,
+  // criamos um fallback ou mostramos uma mensagem informativa
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <div className="min-h-screen bg-evino-cream flex items-center justify-center p-6 text-center">
+      <div className="bg-white border border-evino-gray-200 rounded-evino p-8 max-w-md shadow-lg">
+        <div className="w-16 h-16 rounded-full bg-evino-red-50 text-evino-red flex items-center justify-center text-3xl mx-auto mb-4">
+          🍷
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+        <h2 className="font-display text-xl font-bold text-evino-ink mb-2">Evino Ads Analytics</h2>
+        <p className="text-sm text-evino-gray-500 mb-6">
+          Nenhuma conta de anúncios foi encontrada ou o token da API está ausente.
+        </p>
+        <div className="bg-evino-gray-50 p-4 rounded-evino text-left text-xs font-mono text-evino-gray-600 border border-evino-gray-150 space-y-2">
+          <p>Para inicializar o painel:</p>
+          <p className="font-bold">1. Crie o arquivo .env.local na raiz</p>
+          <p className="font-bold">2. Adicione as variáveis de ambiente:</p>
+          <p className="pl-3 text-evino-red">META_ACCESS_TOKEN=seu_token</p>
+          <p className="pl-3 text-evino-red">SUPABASE_URL=seu_supabase_url</p>
+          <p className="pl-3 text-evino-red">SUPABASE_SERVICE_ROLE_KEY=sua_chave</p>
         </div>
-      </main>
+      </div>
     </div>
   );
 }
