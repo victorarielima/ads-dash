@@ -38,10 +38,21 @@ export function DateRangePicker() {
   const calculatedPreset = getSelectedOption();
   const [activePreset, setActivePreset] = useState<string>(calculatedPreset);
 
+  // Rascunho local das datas personalizadas. Só viram URL (e disparam o reload
+  // pesado) quando o usuário define início E fim e confirma — nunca a cada onChange.
+  const [draftSince, setDraftSince] = useState<string>(since || getOffsetDateStr(29));
+  const [draftUntil, setDraftUntil] = useState<string>(until || getOffsetDateStr(0));
+
   // Sincroniza o preset ativo caso a URL mude externamente
   useEffect(() => {
     setActivePreset(calculatedPreset);
   }, [calculatedPreset]);
+
+  // Mantém o rascunho alinhado com a URL quando ela muda externamente
+  useEffect(() => {
+    if (since) setDraftSince(since);
+    if (until) setDraftUntil(until);
+  }, [since, until]);
 
   const handlePresetChange = (preset: string) => {
     setActivePreset(preset);
@@ -84,9 +95,15 @@ export function DateRangePicker() {
     router.push(`${pathname}?${params.toString()}`);
   };
 
-  const handleCustomDateChange = (field: 'since' | 'until', value: string) => {
+  // Só aplica (e recarrega) quando início e fim estão preenchidos e início <= fim.
+  const isDraftValid = Boolean(draftSince) && Boolean(draftUntil) && draftSince <= draftUntil;
+  const draftDiffersFromUrl = draftSince !== since || draftUntil !== until;
+
+  const applyCustomRange = () => {
+    if (!isDraftValid) return;
     const params = new URLSearchParams(searchParams.toString());
-    params.set(field, value);
+    params.set('since', draftSince);
+    params.set('until', draftUntil);
     router.push(`${pathname}?${params.toString()}`);
   };
 
@@ -112,17 +129,27 @@ export function DateRangePicker() {
         <div className="flex items-center gap-1.5 bg-white border border-evino-gray-200 rounded-evino px-3 py-1 text-sm shadow-sm">
           <input
             type="date"
-            value={since || getOffsetDateStr(29)}
-            onChange={(e) => handleCustomDateChange('since', e.target.value)}
+            value={draftSince}
+            max={draftUntil || undefined}
+            onChange={(e) => setDraftSince(e.target.value)}
             className="bg-transparent focus:outline-none text-evino-gray-700 font-mono text-xs"
           />
           <span className="text-evino-gray-400 text-xs font-semibold">até</span>
           <input
             type="date"
-            value={until || getOffsetDateStr(0)}
-            onChange={(e) => handleCustomDateChange('until', e.target.value)}
+            value={draftUntil}
+            min={draftSince || undefined}
+            onChange={(e) => setDraftUntil(e.target.value)}
             className="bg-transparent focus:outline-none text-evino-gray-700 font-mono text-xs"
           />
+          <button
+            type="button"
+            onClick={applyCustomRange}
+            disabled={!isDraftValid || !draftDiffersFromUrl}
+            className="ml-1 rounded-evino bg-evino-red px-2.5 py-1 text-xs font-semibold text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Aplicar
+          </button>
         </div>
       )}
     </div>
