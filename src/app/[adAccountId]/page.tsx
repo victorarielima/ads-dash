@@ -1,17 +1,20 @@
-import React, { Suspense } from 'react';
+import { Suspense } from 'react';
 import Link from 'next/link';
 import { getInsights } from '@/lib/meta/insights';
 import { getCampaigns, getAds, getAdDetail, getAdSetsByCampaign } from '@/lib/meta/creative';
-import { listAdAccounts } from '@/lib/meta/accounts';
 import { MetricCard } from '@/components/cards/MetricCard';
 import { TimelineChart } from '@/components/charts/TimelineChart';
 import { MetricCardsGridSkeleton, ChartSkeleton, TableSkeleton } from '@/components/LoadingSkeleton';
 import { formatCurrency, formatPercent, formatNumber } from '@/lib/utils/formatters';
 import { calculateDelta } from '@/lib/utils/delta';
 import { parseActions } from '@/lib/meta/actionTypes';
-import { Eye, ChevronRight, Layers } from 'lucide-react';
 import { HierarchyFilters } from '@/components/HierarchyFilters';
 import { CreativeRangeSelector } from '@/components/creative/CreativeRangeSelector';
+import { saveReport } from '@/lib/supabase/reports';
+import { getOrdersByCampaign, getOrdersByCreative, getGrandCruOrdersByCampaign, getGrandCruOrdersByCreative, getOrdersByMonth } from '@/lib/redshift/queries';
+import { RevenueMonthlyCharts, type MonthlyChartPoint } from '@/components/charts/RevenueMonthlyCharts';
+import { ResizableTable } from '@/components/ResizableTable';
+import { listAdAccounts } from '@/lib/meta/accounts';
 
 interface OverviewPageProps {
   params: Promise<{
@@ -103,17 +106,15 @@ export default async function AccountOverviewPage({ params, searchParams }: Over
     activeLevel = 'campaign';
   }
 
-  // 5. Busca dados estruturais rápidos das campanhas, adsets e contas
+  // 5. Busca campanhas, adsets e nome da conta (para detectar brand)
   const [campaignsList, adSetsForCampaign, accounts] = await Promise.all([
     getCampaigns(adAccountId),
     campaign_id ? getAdSetsByCampaign(campaign_id, adAccountId) : Promise.resolve([]),
     listAdAccounts(),
   ]);
 
-  // Identifica se a marca ativa é Grand Cru para estilização consistente do convite
-  const activeAccount = accounts.find((a) => a.id === adAccountId);
-  const accountName = activeAccount?.name?.toLowerCase() || '';
-  const isGrandCru = accountName.includes('grand') || accountName.includes('cru');
+  const activeAccountName = accounts.find((a) => a.id === adAccountId)?.name?.toLowerCase() || '';
+  const isGrandCru = activeAccountName.includes('grand') || activeAccountName.includes('cru');
 
   return (
     <div className="space-y-6">
@@ -126,38 +127,30 @@ export default async function AccountOverviewPage({ params, searchParams }: Over
       />
 
       {!campaign_id ? (
-        // TELA DE BOAS-VINDAS / CONVITE SELECIONE UMA CAMPANHA
-        <div className="bg-white border border-evino-gray-200 rounded-evino p-8 shadow-sm flex flex-col items-center text-center max-w-2xl mx-auto my-12">
-          <div className={`w-16 h-16 rounded-full ${isGrandCru ? 'bg-[#C8A95C]/10' : 'bg-evino-red/10'} flex items-center justify-center mb-5`}>
-            <Layers className={`w-8 h-8 ${isGrandCru ? 'text-[#C8A95C]' : 'text-evino-red'}`} />
-          </div>
-          <h2 className="font-display text-2xl font-bold text-evino-ink">Selecione uma Campanha</h2>
-          <p className="text-sm text-evino-gray-500 mt-2 max-w-md">
-            Para carregar o relatório analítico de performance, conversões de vinho e os principais criativos, selecione uma das campanhas no menu de fluxo acima.
-          </p>
-
-          {campaignsList.length > 0 && (
-            <div className="mt-8 w-full border-t border-evino-gray-150 pt-6 text-left">
-              <p className="text-xs font-bold text-evino-gray-400 uppercase tracking-wider mb-3">Atalhos rápidos para as campanhas:</p>
-              <div className="space-y-2 max-h-[240px] overflow-y-auto pr-1">
-                {campaignsList.map((camp) => (
-                  <Link
-                    key={camp.id}
-                    href={`/${adAccountId}?campaign_id=${camp.id}`}
-                    className="flex items-center justify-between p-3 rounded-evino border border-evino-gray-150 bg-evino-cream/20 hover:bg-evino-cream/50 transition-all group"
-                  >
-                    <div className="truncate max-w-[85%]">
-                      <span className={`font-semibold text-sm text-evino-ink block truncate transition-all ${isGrandCru ? 'group-hover:text-[#C8A95C]' : 'group-hover:text-evino-red'}`}>
-                        {camp.name}
-                      </span>
-                      <span className="text-[10px] text-evino-gray-400 font-mono">{camp.id}</span>
-                    </div>
-                    <ChevronRight className={`w-4 h-4 text-evino-gray-400 transition-all transform group-hover:translate-x-1 ${isGrandCru ? 'group-hover:text-[#C8A95C]' : 'group-hover:text-evino-red'}`} />
-                  </Link>
-                ))}
-              </div>
-            </div>
-          )}
+        // VISÃO GERAL DA CONTA — todas campanhas e criativos
+        <div className="space-y-6">
+          <Suspense fallback={<ChartSkeleton />}>
+            <RevenueChartsSection
+              accountId={adAccountId}
+              isGrandCru={isGrandCru}
+              currentRange={{ since: currentSince, until: currentUntil }}
+            />
+          </Suspense>
+          <Suspense fallback={<TableSkeleton />}>
+            <AllCampaignsTable
+              accountId={adAccountId}
+              isGrandCru={isGrandCru}
+              currentRange={{ since: currentSince, until: currentUntil }}
+              prevRange={{ since: prevSince, until: prevUntil }}
+            />
+          </Suspense>
+          <Suspense fallback={<TableSkeleton />}>
+            <AllCreativesTable
+              accountId={adAccountId}
+              isGrandCru={isGrandCru}
+              currentRange={{ since: currentSince, until: currentUntil }}
+            />
+          </Suspense>
         </div>
       ) : (
         // RELATÓRIO COMPLETO (SÓ EXIBE APÓS SELECIONAR A CAMPANHA)
@@ -244,6 +237,29 @@ async function MetricsGrid({
   const currentCpa = currentPurchases > 0 ? currentSpend / currentPurchases : 0;
   const currentRoas = currentSpend > 0 ? currentRevenue / currentSpend : 0;
   const currentFreq = currentReach > 0 ? currentImpressions / currentReach : 1;
+
+  // Persiste o snapshot das métricas no Supabase para histórico e atualização futura
+  await saveReport({
+    accountId,
+    entityId,
+    entityType: level,
+    dateSince: currentRange.since,
+    dateUntil: currentRange.until,
+    metrics: {
+      spend: currentSpend,
+      impressions: currentImpressions,
+      reach: currentReach,
+      frequency: currentFreq,
+      clicks: currentClicks,
+      ctr: currentCtr,
+      cpc: currentCpc,
+      cpm: currentCpm,
+      purchases: currentPurchases,
+      revenue: currentRevenue,
+      roas: currentRoas,
+      cpa: currentCpa,
+    },
+  });
 
   const prevSpend = prev ? parseFloat(prev.spend || '0') : 0;
   const prevImpressions = prev ? parseFloat(prev.impressions || '0') : 0;
@@ -674,6 +690,413 @@ async function TopCreativesTable({
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+// ── Helpers de cor ────────────────────────────────────────────────────────────
+
+function getRoasColorClass(roas: number): string {
+  if (roas <= 0) return 'bg-evino-gray-100 text-evino-gray-400';
+  if (roas >= 8) return 'bg-green-600 text-white';
+  if (roas >= 4) return 'bg-green-400 text-green-950';
+  if (roas >= 3) return 'bg-lime-300 text-lime-950';
+  if (roas >= 2) return 'bg-amber-300 text-amber-900';
+  return 'bg-orange-400 text-white';
+}
+
+function getCacColorClass(cac: number): string {
+  if (cac <= 0) return 'bg-evino-gray-100 text-evino-gray-400';
+  if (cac <= 380) return 'bg-green-400 text-green-950';
+  if (cac <= 520) return 'bg-lime-300 text-lime-950';
+  if (cac <= 700) return 'bg-amber-300 text-amber-900';
+  return 'bg-red-400 text-white';
+}
+
+function getCm2ColorClass(pct: number): string {
+  if (pct <= 0) return 'bg-evino-gray-100 text-evino-gray-400';
+  if (pct >= 35) return 'bg-green-500 text-white';
+  if (pct >= 28) return 'bg-lime-300 text-lime-950';
+  if (pct >= 22) return 'bg-amber-300 text-amber-900';
+  return 'bg-orange-400 text-white';
+}
+
+function getTicketColorClass(ticket: number): string {
+  if (ticket <= 0) return 'bg-evino-gray-100 text-evino-gray-400';
+  if (ticket >= 600) return 'bg-green-500 text-white';
+  if (ticket >= 400) return 'bg-lime-300 text-lime-950';
+  if (ticket >= 280) return 'bg-amber-300 text-amber-900';
+  return 'bg-orange-400 text-white';
+}
+
+function getPrevPeriodLabel(since: string): string {
+  try {
+    return new Intl.DateTimeFormat('pt-BR', { month: 'long' }).format(
+      new Date(since + 'T00:00:00')
+    );
+  } catch {
+    return 'Per. Anterior';
+  }
+}
+
+// ── Tabela: Visão geral de todas as campanhas ────────────────────────────────
+
+async function AllCampaignsTable({
+  accountId,
+  isGrandCru,
+  currentRange,
+  prevRange,
+}: {
+  accountId: string;
+  isGrandCru: boolean;
+  currentRange: { since: string; until: string };
+  prevRange: { since: string; until: string };
+}) {
+  // Meta: invest + ROAS período anterior; Redshift: receita real / ativações
+  const [currentInsights, prevInsights, rsRows] = await Promise.all([
+    getInsights(accountId, { level: 'campaign', timeRange: currentRange }).catch(() => []),
+    getInsights(accountId, { level: 'campaign', timeRange: prevRange }).catch(() => []),
+    isGrandCru
+      ? getGrandCruOrdersByCampaign(currentRange.since, currentRange.until).catch(() => [])
+      : getOrdersByCampaign(currentRange.since, currentRange.until).catch(() => []),
+  ]);
+
+  const prevRoasByCampaign = new Map<string, number>();
+  for (const ins of prevInsights) {
+    const spend = parseFloat(ins.spend || '0');
+    const revenue = parseActions(ins.action_values, 'purchase');
+    const roas = spend > 0 ? revenue / spend : 0;
+    if (ins.campaign_id) prevRoasByCampaign.set(ins.campaign_id, roas);
+  }
+
+  const rsMap = new Map(rsRows.map((r) => [r.utm_campaign, r]));
+
+  const rows = currentInsights
+    .map((ins) => {
+      const spend = parseFloat(ins.spend || '0');
+      const name = ins.campaign_name || 'Campanha Desconhecida';
+      const rs = rsMap.get(name) as any;
+
+      const revenue = isGrandCru ? 0 : (rs?.total_revenue ?? 0);
+      // Ativação = primeira compra do cliente (is_first_order). Grand Cru: sem coluna, usa pedidos.
+      const activations = isGrandCru ? (rs?.total_orders ?? 0) : (rs?.total_activations ?? 0);
+      const cm2 = isGrandCru ? 0 : (rs?.total_cm2 ?? 0);
+      // ROAS: real (Evino) ou da Meta (Grand Cru — sem receita no Redshift)
+      const metaRevenue = parseActions(ins.action_values, 'purchase');
+      const roas = isGrandCru
+        ? (spend > 0 && metaRevenue > 0 ? metaRevenue / spend : 0)
+        : (spend > 0 && revenue > 0 ? revenue / spend : 0);
+      // CAC = custo por aquisição de cliente = investimento / ativações
+      const cac = activations > 0 ? spend / activations : 0;
+
+      return {
+        id: ins.campaign_id || '',
+        name,
+        spend,
+        revenue,
+        activations,
+        cm2,
+        roas,
+        prevRoas: prevRoasByCampaign.get(ins.campaign_id || '') ?? null,
+        cac,
+      };
+    })
+    .sort((a, b) => b.spend - a.spend);
+
+  const totalSpend = rows.reduce((s, r) => s + r.spend, 0);
+  const totalRevenue = rows.reduce((s, r) => s + r.revenue, 0);
+  const prevLabel = getPrevPeriodLabel(prevRange.since);
+
+  const campaignColSpan = isGrandCru ? 7 : 9;
+
+  return (
+    <div className="bg-white border border-evino-gray-200 rounded-evino shadow-sm overflow-hidden">
+      <div className="px-5 py-4 border-b border-evino-gray-200 flex items-center justify-between">
+        <div>
+          <h3 className="font-display text-lg font-semibold text-evino-ink">Campanhas</h3>
+          <p className="text-xs text-evino-gray-500">{currentRange.since} até {currentRange.until}</p>
+        </div>
+      </div>
+      <ResizableTable className="overflow-x-auto">
+        <table className="w-full text-left border-collapse text-sm">
+          <thead>
+            <tr className="bg-[#1a2744] text-white text-xs font-semibold uppercase tracking-wider">
+              <th className="p-3 min-w-[220px]">Campanha</th>
+              <th className="p-3 text-right whitespace-nowrap">Invest</th>
+              <th className="p-3 text-right whitespace-nowrap">% Invest</th>
+              {!isGrandCru && (
+                <>
+                  <th className="p-3 text-right whitespace-nowrap">Receita LC</th>
+                  <th className="p-3 text-right whitespace-nowrap">% Receita LC</th>
+                </>
+              )}
+              <th className="p-3 text-center whitespace-nowrap">{isGrandCru ? 'ROAS Meta' : 'ROAS LC'}</th>
+              <th className="p-3 text-center whitespace-nowrap capitalize">{isGrandCru ? `ROAS Meta ${prevLabel}` : `ROAS LC ${prevLabel}`}</th>
+              <th className="p-3 text-right whitespace-nowrap">Ativações</th>
+              <th className="p-3 text-center whitespace-nowrap">{isGrandCru ? 'CAC' : 'CAC LC'}</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-evino-gray-100">
+            {rows.length === 0 ? (
+              <tr>
+                <td colSpan={campaignColSpan} className="p-6 text-center text-evino-gray-400">
+                  Nenhuma campanha rodou no período.
+                </td>
+              </tr>
+            ) : (
+              rows.map((row, idx) => {
+                const pctSpend = totalSpend > 0 ? (row.spend / totalSpend) * 100 : 0;
+                const pctRevenue = totalRevenue > 0 ? (row.revenue / totalRevenue) * 100 : 0;
+                return (
+                  <tr key={row.id} className={idx % 2 === 0 ? 'bg-white' : 'bg-evino-gray-50/50'}>
+                    <td className="p-3 max-w-[300px]">
+                      <Link
+                        href={`/${accountId}?campaign_id=${row.id}`}
+                        className="font-medium text-evino-ink hover:text-evino-red hover:underline block truncate"
+                        title={row.name}
+                      >
+                        {row.name}
+                      </Link>
+                    </td>
+                    <td className="p-3 text-right font-mono text-xs tabular-nums text-evino-ink">
+                      {formatCurrency(row.spend)}
+                    </td>
+                    <td className="p-3 text-right font-mono text-xs tabular-nums text-evino-gray-500">
+                      {pctSpend.toFixed(1)}%
+                    </td>
+                    {!isGrandCru && (
+                      <>
+                        <td className="p-3 text-right font-mono text-xs tabular-nums text-evino-ink">
+                          {formatCurrency(row.revenue)}
+                        </td>
+                        <td className="p-3 text-right font-mono text-xs tabular-nums text-evino-gray-500">
+                          {pctRevenue.toFixed(1)}%
+                        </td>
+                      </>
+                    )}
+                    <td className="p-3 text-center">
+                      <span className={`inline-block min-w-[52px] px-2 py-0.5 rounded text-xs font-bold ${getRoasColorClass(row.roas)}`}>
+                        {row.roas > 0 ? row.roas.toFixed(2) : '0.00'}
+                      </span>
+                    </td>
+                    <td className="p-3 text-center font-mono text-xs tabular-nums text-evino-gray-600">
+                      {row.prevRoas !== null ? row.prevRoas.toFixed(2) : '-'}
+                    </td>
+                    <td className="p-3 text-right font-mono text-xs tabular-nums text-evino-ink">
+                      {formatNumber(row.activations)}
+                    </td>
+                    <td className="p-3 text-center">
+                      {row.cac > 0 ? (
+                        <span className={`inline-block min-w-[72px] px-2 py-0.5 rounded text-xs font-bold ${getCacColorClass(row.cac)}`}>
+                          {formatCurrency(row.cac)}
+                        </span>
+                      ) : (
+                        <span className="text-evino-gray-400 text-xs">-</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </ResizableTable>
+    </div>
+  );
+}
+
+// ── Gráficos de receita mensais (todas as campanhas) ─────────────────────────
+
+async function RevenueChartsSection({
+  accountId,
+  isGrandCru,
+  currentRange,
+}: {
+  accountId: string;
+  isGrandCru: boolean;
+  currentRange: { since: string; until: string };
+}) {
+  const yoySince = (() => {
+    const d = new Date(currentRange.since + 'T00:00:00');
+    d.setFullYear(d.getFullYear() - 1);
+    return d.toISOString().split('T')[0];
+  })();
+  const yoyUntil = (() => {
+    const d = new Date(currentRange.until + 'T00:00:00');
+    d.setFullYear(d.getFullYear() - 1);
+    return d.toISOString().split('T')[0];
+  })();
+
+  const [monthlyInsights, rsMonthly, yoyRsMonthly] = await Promise.all([
+    getInsights(accountId, { level: 'account', timeRange: currentRange, timeIncrement: 'monthly' }).catch(() => []),
+    !isGrandCru ? getOrdersByMonth(currentRange.since, currentRange.until).catch(() => []) : Promise.resolve([]),
+    !isGrandCru ? getOrdersByMonth(yoySince, yoyUntil).catch(() => []) : Promise.resolve([]),
+  ]);
+
+  const spendByMonth = new Map<string, number>();
+  const metaRevenueByMonth = new Map<string, number>();
+  for (const ins of monthlyInsights) {
+    const mk = (ins.date_start || '').slice(0, 7);
+    if (!mk) continue;
+    spendByMonth.set(mk, (spendByMonth.get(mk) || 0) + parseFloat(ins.spend || '0'));
+    metaRevenueByMonth.set(mk, (metaRevenueByMonth.get(mk) || 0) + parseActions(ins.action_values, 'purchase'));
+  }
+
+  const rsRevenueByMonth = new Map<string, number>();
+  for (const r of rsMonthly as any[]) {
+    const mk = String(r.month || '').slice(0, 7);
+    if (mk) rsRevenueByMonth.set(mk, r.total_revenue ?? 0);
+  }
+
+  const yoyRevenueByMonth = new Map<string, number>();
+  for (const r of yoyRsMonthly as any[]) {
+    const mk = String(r.month || '').slice(0, 7);
+    if (mk) yoyRevenueByMonth.set(mk, r.total_revenue ?? 0);
+  }
+
+  const PT_MONTHS = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+
+  const chartData: MonthlyChartPoint[] = Array.from(spendByMonth.keys())
+    .sort()
+    .map((mk) => {
+      const [yearStr, monthStr] = mk.split('-');
+      const year = parseInt(yearStr);
+      const month = parseInt(monthStr);
+      const spend = spendByMonth.get(mk) || 0;
+      const metaRevenue = metaRevenueByMonth.get(mk) || 0;
+      const rsRevenue = rsRevenueByMonth.get(mk) || 0;
+      const revenue = isGrandCru ? metaRevenue : rsRevenue;
+      const roas = spend > 0 ? revenue / spend : 0;
+
+      const yoyMk = `${year - 1}-${String(month).padStart(2, '0')}`;
+      const yoyRev = !isGrandCru && yoyRevenueByMonth.has(yoyMk) ? yoyRevenueByMonth.get(yoyMk)! : null;
+      const yoyGrowth = yoyRev !== null && yoyRev > 0 ? ((revenue - yoyRev) / yoyRev) * 100 : null;
+
+      return {
+        monthKey: mk,
+        label: `${PT_MONTHS[month - 1]}/${String(year).slice(2)}`,
+        revenue,
+        spend,
+        roas,
+        yoyGrowth,
+      };
+    });
+
+  return <RevenueMonthlyCharts data={chartData} isGrandCru={isGrandCru} />;
+}
+
+// ── Tabela: Visão geral de todos os criativos (dados reais do Redshift) ──────
+
+async function AllCreativesTable({
+  accountId,
+  isGrandCru,
+  currentRange,
+}: {
+  accountId: string;
+  isGrandCru: boolean;
+  currentRange: { since: string; until: string };
+}) {
+  const rsRows = isGrandCru
+    ? await getGrandCruOrdersByCreative(currentRange.since, currentRange.until).catch(() => [])
+    : await getOrdersByCreative(currentRange.since, currentRange.until).catch(() => []);
+
+  const rows = (rsRows as any[]).map((r) => ({
+    name: r.utm_content,
+    campaign: r.utm_campaign || '',
+    revenue: r.total_revenue ?? 0,
+    orders: r.total_orders ?? 0,
+    cm2: r.total_cm2 ?? 0,
+    ticketMedio: (r.total_orders ?? 0) > 0 ? (r.total_revenue ?? 0) / r.total_orders : 0,
+    cm2Pct: (r.total_revenue ?? 0) > 0 ? ((r.total_cm2 ?? 0) / r.total_revenue) * 100 : 0,
+  }));
+
+  const maxRevenue = rows[0]?.revenue || 1;
+  const colSpanCount = isGrandCru ? 3 : 6;
+
+  return (
+    <div className="bg-white border border-evino-gray-200 rounded-evino shadow-sm overflow-hidden">
+      <div className="px-5 py-4 border-b border-evino-gray-200 flex items-center gap-3">
+        <div>
+          <h3 className="font-display text-lg font-semibold text-evino-red">Criativos</h3>
+          <p className="text-xs text-evino-gray-500">{currentRange.since} até {currentRange.until} · Fonte: Redshift (last-click)</p>
+        </div>
+      </div>
+      <ResizableTable className="overflow-x-auto">
+        <table className="w-full text-left border-collapse text-sm">
+          <thead>
+            <tr className="bg-[#1a2744] text-white text-xs font-semibold uppercase tracking-wider">
+              <th className="p-3 w-10 text-center">#</th>
+              <th className="p-3 min-w-[300px]">Utm Content</th>
+              <th className="p-3 text-right whitespace-nowrap">Pedidos</th>
+              {!isGrandCru && (
+                <>
+                  <th className="p-3 min-w-[240px] whitespace-nowrap">Receita Total c/ Frete</th>
+                  <th className="p-3 text-center whitespace-nowrap">Ticket Médio</th>
+                  <th className="p-3 text-center whitespace-nowrap">CM2 (%)</th>
+                </>
+              )}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-evino-gray-100">
+            {rows.length === 0 ? (
+              <tr>
+                <td colSpan={colSpanCount} className="p-6 text-center text-evino-gray-400">
+                  Nenhum criativo encontrado no Redshift para o período.
+                </td>
+              </tr>
+            ) : (
+              rows.map((row, idx) => {
+                const barPct = maxRevenue > 0 ? (row.revenue / maxRevenue) * 100 : 0;
+                return (
+                  <tr key={`${row.name}-${idx}`} className={idx % 2 === 0 ? 'bg-white' : 'bg-evino-gray-50/50'}>
+                    <td className="p-3 text-center text-evino-gray-400 text-xs font-mono">{idx + 1}</td>
+                    <td className="p-3 max-w-[380px]">
+                      <span
+                        className="font-medium text-evino-ink block truncate"
+                        title={row.name}
+                      >
+                        {row.name}
+                      </span>
+                      {row.campaign && (
+                        <span className="text-[10px] text-evino-gray-400 block truncate">
+                          {row.campaign}
+                        </span>
+                      )}
+                    </td>
+                    <td className="p-3 text-right font-mono text-xs tabular-nums text-evino-ink">
+                      {formatNumber(row.orders)}
+                    </td>
+                    {!isGrandCru && (
+                      <>
+                        <td className="p-3">
+                          <div className="flex items-center gap-2">
+                            <div className="flex-1 h-4 bg-evino-gray-100 rounded overflow-hidden min-w-[40px]">
+                              <div className="h-full bg-indigo-500 rounded transition-[width] duration-300" style={{ width: `${barPct}%` }} />
+                            </div>
+                            <span className="font-mono text-xs tabular-nums text-evino-ink whitespace-nowrap">
+                              {formatCurrency(row.revenue)}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="p-3 text-center">
+                          <span className={`inline-block min-w-[80px] px-2 py-0.5 rounded text-xs font-bold ${getTicketColorClass(row.ticketMedio)}`}>
+                            {formatCurrency(row.ticketMedio)}
+                          </span>
+                        </td>
+                        <td className="p-3 text-center">
+                          <span className={`inline-block min-w-[56px] px-2 py-0.5 rounded text-xs font-bold ${getCm2ColorClass(row.cm2Pct)}`}>
+                            {row.cm2Pct.toFixed(1)}%
+                          </span>
+                        </td>
+                      </>
+                    )}
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </ResizableTable>
     </div>
   );
 }

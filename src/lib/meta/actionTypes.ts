@@ -21,12 +21,22 @@ export function getActionLabel(actionType: string): string {
 
 export function parseActions(actions: Array<{ action_type: string; value: string }> | undefined, type: string): number {
   if (!actions || !Array.isArray(actions)) return 0;
-  
-  // Mapeamento inteligente para aceitar variações comuns da Graph API para Pixel (ex: fb_pixel_purchase)
-  let searchTypes = [type];
+
   if (type === 'purchase') {
-    searchTypes = ['purchase', 'offsite_conversion.fb_pixel_purchase', 'onsite_conversion.messaging_purchase'];
-  } else if (type === 'add_to_cart') {
+    // 'purchase' é o tipo canônico que o Meta Ads Manager exibe por padrão.
+    // NÃO somamos 'offsite_conversion.fb_pixel_purchase' junto pois representa
+    // os mesmos eventos em formato legado — somar os dois gera duplicação.
+    const direct = actions.filter(a => a.action_type === 'purchase');
+    if (direct.length > 0) {
+      return direct.reduce((sum, act) => sum + parseFloat(act.value || '0'), 0);
+    }
+    // Fallback apenas para pixels antigos que não reportam 'purchase' diretamente
+    const legacy = actions.filter(a => a.action_type === 'offsite_conversion.fb_pixel_purchase');
+    return legacy.reduce((sum, act) => sum + parseFloat(act.value || '0'), 0);
+  }
+
+  let searchTypes = [type];
+  if (type === 'add_to_cart') {
     searchTypes = ['add_to_cart', 'offsite_conversion.fb_pixel_add_to_cart'];
   } else if (type === 'initiate_checkout') {
     searchTypes = ['initiate_checkout', 'offsite_conversion.fb_pixel_initiate_checkout'];
@@ -36,7 +46,7 @@ export function parseActions(actions: Array<{ action_type: string; value: string
     searchTypes = ['landing_page_view', 'offsite_conversion.fb_pixel_landing_page_view'];
   }
 
-  // Filtra e soma todos os eventos correspondentes para maior precisão analítica
-  const matchingActions = actions.filter(a => searchTypes.includes(a.action_type));
-  return matchingActions.reduce((sum, act) => sum + parseFloat(act.value || '0'), 0);
+  return actions
+    .filter(a => searchTypes.includes(a.action_type))
+    .reduce((sum, act) => sum + parseFloat(act.value || '0'), 0);
 }

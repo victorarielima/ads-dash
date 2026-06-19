@@ -27,3 +27,23 @@ create table if not exists public.meta_api_calls (
 
 -- Habilitar RLS (Row Level Security) se desejar, mas como as chamadas usam
 -- service_role_key no servidor, o acesso direto de clients públicos já é bloqueado por padrão.
+
+-- 3. Tabela de Relatórios Persistidos (snapshots de métricas computadas)
+create table if not exists public.ad_reports (
+  id bigserial primary key,
+  account_id text not null,
+  entity_id text not null,
+  entity_type text not null,       -- 'account', 'campaign' ou 'adset'
+  date_since text not null,
+  date_until text not null,
+  metrics jsonb not null,          -- métricas computadas (spend, roas, ctr, etc.)
+  updated_at timestamptz not null default now()
+);
+
+-- Índice único para upsert eficiente por entidade e período
+create unique index if not exists idx_reports_entity_date
+  on public.ad_reports(account_id, entity_id, date_since, date_until);
+
+-- Índice para consulta por conta ordenada por data de atualização
+create index if not exists idx_reports_account_updated
+  on public.ad_reports(account_id, updated_at desc);
