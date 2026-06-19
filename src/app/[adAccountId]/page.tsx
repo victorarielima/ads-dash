@@ -130,10 +130,10 @@ export default async function AccountOverviewPage({ params, searchParams }: Over
         // VISÃO GERAL DA CONTA — todas campanhas e criativos
         <div className="space-y-6">
           <Suspense fallback={<ChartSkeleton />}>
+            {/* Gráficos de receita/ROAS/YoY: sempre últimos 6 meses, não seguem o filtro */}
             <RevenueChartsSection
               accountId={adAccountId}
               isGrandCru={isGrandCru}
-              currentRange={{ since: currentSince, until: currentUntil }}
             />
           </Suspense>
           <Suspense fallback={<TableSkeleton />}>
@@ -910,26 +910,34 @@ async function AllCampaignsTable({
 async function RevenueChartsSection({
   accountId,
   isGrandCru,
-  currentRange,
 }: {
   accountId: string;
   isGrandCru: boolean;
-  currentRange: { since: string; until: string };
 }) {
+  // Estes gráficos são fixos nos últimos 6 meses e NÃO seguem o filtro de datas.
+  const fmtLocal = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const now = new Date();
+  // Primeiro dia do mês 5 meses atrás → janela de 6 meses incluindo o mês atual.
+  const sixMonthRange = {
+    since: fmtLocal(new Date(now.getFullYear(), now.getMonth() - 5, 1)),
+    until: fmtLocal(now),
+  };
+
   const yoySince = (() => {
-    const d = new Date(currentRange.since + 'T00:00:00');
+    const d = new Date(sixMonthRange.since + 'T00:00:00');
     d.setFullYear(d.getFullYear() - 1);
     return d.toISOString().split('T')[0];
   })();
   const yoyUntil = (() => {
-    const d = new Date(currentRange.until + 'T00:00:00');
+    const d = new Date(sixMonthRange.until + 'T00:00:00');
     d.setFullYear(d.getFullYear() - 1);
     return d.toISOString().split('T')[0];
   })();
 
   const [monthlyInsights, rsMonthly, yoyRsMonthly] = await Promise.all([
-    getInsights(accountId, { level: 'account', timeRange: currentRange, timeIncrement: 'monthly' }).catch(() => []),
-    !isGrandCru ? getOrdersByMonth(currentRange.since, currentRange.until).catch(() => []) : Promise.resolve([]),
+    getInsights(accountId, { level: 'account', timeRange: sixMonthRange, timeIncrement: 'monthly' }).catch(() => []),
+    !isGrandCru ? getOrdersByMonth(sixMonthRange.since, sixMonthRange.until).catch(() => []) : Promise.resolve([]),
     !isGrandCru ? getOrdersByMonth(yoySince, yoyUntil).catch(() => []) : Promise.resolve([]),
   ]);
 
