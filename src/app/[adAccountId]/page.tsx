@@ -7,11 +7,12 @@ import { TimelineChart } from '@/components/charts/TimelineChart';
 import { MetricCardsGridSkeleton, ChartSkeleton, TableSkeleton } from '@/components/LoadingSkeleton';
 import { formatCurrency, formatPercent, formatNumber } from '@/lib/utils/formatters';
 import { calculateDelta } from '@/lib/utils/delta';
+import { spDateStr, spOffsetDateStr } from '@/lib/utils/date';
 import { parseActions } from '@/lib/meta/actionTypes';
 import { HierarchyFilters } from '@/components/HierarchyFilters';
 import { CreativeRangeSelector } from '@/components/creative/CreativeRangeSelector';
 import { saveReport } from '@/lib/supabase/reports';
-import { getOrdersByCampaign, getOrdersByCreative, getGrandCruOrdersByCampaign, getGrandCruOrdersByCreative, getOrdersByMonth } from '@/lib/redshift/queries';
+import { getOrdersByCampaign, getOrdersByCreative, getGrandCruOrdersByCampaign, getGrandCruOrdersByCreative, getOrdersByMonth, getOrdersTotals } from '@/lib/redshift/queries';
 import { RevenueMonthlyCharts, type MonthlyChartPoint } from '@/components/charts/RevenueMonthlyCharts';
 import { ResizableTable } from '@/components/ResizableTable';
 import { listAdAccounts } from '@/lib/meta/accounts';
@@ -40,15 +41,17 @@ export default async function AccountOverviewPage({ params, searchParams }: Over
   
   const { since, until, campaign_id, adset_id, creative_range } = await searchParams;
 
-  // 1. Define as datas padrão (últimos 30 dias se ausente na URL)
-  const today = new Date();
-  const defaultUntil = today.toISOString().split('T')[0];
-  const thirtyDaysAgo = new Date();
-  thirtyDaysAgo.setDate(today.getDate() - 29);
-  const defaultSince = thirtyDaysAgo.toISOString().split('T')[0];
+  // 1. Define as datas padrão (últimos 30 dias se ausente na URL).
+  // Datas no fuso de São Paulo para casar com o filtro local do Redshift.
+  const defaultUntil = spDateStr();
+  const defaultSince = spOffsetDateStr(29);
 
   const currentSince = since || defaultSince;
   const currentUntil = until || defaultUntil;
+
+  // Filtro "hoje": início = fim = data de hoje. Só nesse caso a coluna
+  // "ROAS LC (mês)" (período anterior = dia anterior) deve aparecer.
+  const isToday = currentSince === currentUntil && currentUntil === defaultUntil;
 
   // 2. Calcula o período de duração equivalente anterior para cálculo do delta
   const sDate = new Date(currentSince + 'T00:00:00');
@@ -142,6 +145,7 @@ export default async function AccountOverviewPage({ params, searchParams }: Over
               isGrandCru={isGrandCru}
               currentRange={{ since: currentSince, until: currentUntil }}
               prevRange={{ since: prevSince, until: prevUntil }}
+              isToday={isToday}
             />
           </Suspense>
           <Suspense fallback={<TableSkeleton />}>
@@ -746,11 +750,13 @@ async function AllCampaignsTable({
   isGrandCru,
   currentRange,
   prevRange,
+  isToday,
 }: {
   accountId: string;
   isGrandCru: boolean;
   currentRange: { since: string; until: string };
   prevRange: { since: string; until: string };
+  isToday: boolean;
 }) {
   // Meta: invest + ROAS período anterior; Redshift: receita real / ativações
   const [currentInsights, prevInsights, rsRows] = await Promise.all([
@@ -807,7 +813,8 @@ async function AllCampaignsTable({
   const totalRevenue = rows.reduce((s, r) => s + r.revenue, 0);
   const prevLabel = getPrevPeriodLabel(prevRange.since);
 
-  const campaignColSpan = isGrandCru ? 7 : 9;
+  // A coluna "ROAS LC (mês)" (período anterior) só aparece no filtro "hoje".
+  const campaignColSpan = (isGrandCru ? 7 : 9) - (isToday ? 0 : 1);
 
   return (
     <div className="bg-white border border-evino-gray-200 rounded-evino shadow-sm overflow-hidden">
@@ -831,7 +838,9 @@ async function AllCampaignsTable({
                 </>
               )}
               <th className="p-3 text-center whitespace-nowrap">{isGrandCru ? 'ROAS Meta' : 'ROAS LC'}</th>
-              <th className="p-3 text-center whitespace-nowrap capitalize">{isGrandCru ? `ROAS Meta ${prevLabel}` : `ROAS LC ${prevLabel}`}</th>
+              {isToday && (
+                <th className="p-3 text-center whitespace-nowrap capitalize">{isGrandCru ? `ROAS Meta ${prevLabel}` : `ROAS LC ${prevLabel}`}</th>
+              )}
               <th className="p-3 text-right whitespace-nowrap">Ativações</th>
               <th className="p-3 text-center whitespace-nowrap">{isGrandCru ? 'CAC' : 'CAC LC'}</th>
             </tr>
@@ -879,9 +888,11 @@ async function AllCampaignsTable({
                         {row.roas > 0 ? row.roas.toFixed(2) : '0.00'}
                       </span>
                     </td>
-                    <td className="p-3 text-center font-mono text-xs tabular-nums text-evino-gray-600">
-                      {row.prevRoas !== null ? row.prevRoas.toFixed(2) : '-'}
-                    </td>
+                    {isToday && (
+                      <td className="p-3 text-center font-mono text-xs tabular-nums text-evino-gray-600">
+                        {row.prevRoas !== null ? row.prevRoas.toFixed(2) : '-'}
+                      </td>
+                    )}
                     <td className="p-3 text-right font-mono text-xs tabular-nums text-evino-ink">
                       {formatNumber(row.activations)}
                     </td>
@@ -915,13 +926,13 @@ async function RevenueChartsSection({
   isGrandCru: boolean;
 }) {
   // Estes gráficos são fixos nos últimos 6 meses e NÃO seguem o filtro de datas.
-  const fmtLocal = (d: Date) =>
-    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  const now = new Date();
+  // Datas no fuso de São Paulo para casar com o filtro local do Redshift.
+  const todayStr = spDateStr();
+  const [spYear, spMonth] = todayStr.split('-').map((n) => parseInt(n)); // spMonth: 1-12
   // Primeiro dia do mês 5 meses atrás → janela de 6 meses incluindo o mês atual.
   const sixMonthRange = {
-    since: fmtLocal(new Date(now.getFullYear(), now.getMonth() - 5, 1)),
-    until: fmtLocal(now),
+    since: `${spMonth - 5 <= 0 ? spYear - 1 : spYear}-${String(((spMonth - 5 + 11) % 12) + 1).padStart(2, '0')}-01`,
+    until: todayStr,
   };
 
   const yoySince = (() => {
@@ -935,11 +946,23 @@ async function RevenueChartsSection({
     return d.toISOString().split('T')[0];
   })();
 
-  const [monthlyInsights, rsMonthly, yoyRsMonthly] = await Promise.all([
+  // Snapshot do dia atual (receita real LC + investimento Meta de hoje).
+  const todayRange = { since: todayStr, until: todayStr };
+
+  const [monthlyInsights, rsMonthly, yoyRsMonthly, todayInsights, rsToday] = await Promise.all([
     getInsights(accountId, { level: 'account', timeRange: sixMonthRange, timeIncrement: 'monthly' }).catch(() => []),
     !isGrandCru ? getOrdersByMonth(sixMonthRange.since, sixMonthRange.until).catch(() => []) : Promise.resolve([]),
     !isGrandCru ? getOrdersByMonth(yoySince, yoyUntil).catch(() => []) : Promise.resolve([]),
+    getInsights(accountId, { level: 'account', timeRange: todayRange }).catch(() => []),
+    !isGrandCru ? getOrdersTotals(todayStr, todayStr).catch(() => ({ total_revenue: 0, total_orders: 0 })) : Promise.resolve({ total_revenue: 0, total_orders: 0 }),
   ]);
+
+  // Métricas de hoje: receita LC (Redshift) p/ Evino, receita Meta p/ Grand Cru.
+  const todayIns = todayInsights[0] || null;
+  const todaySpend = todayIns ? parseFloat(todayIns.spend || '0') : 0;
+  const todayMetaRevenue = todayIns ? parseActions(todayIns.action_values, 'purchase') : 0;
+  const todayRevenue = isGrandCru ? todayMetaRevenue : rsToday.total_revenue;
+  const todayRoas = todaySpend > 0 ? todayRevenue / todaySpend : 0;
 
   const spendByMonth = new Map<string, number>();
   const metaRevenueByMonth = new Map<string, number>();
@@ -990,7 +1013,23 @@ async function RevenueChartsSection({
       };
     });
 
-  return <RevenueMonthlyCharts data={chartData} isGrandCru={isGrandCru} />;
+  return (
+    <div className="space-y-4">
+      <RevenueMonthlyCharts data={chartData} isGrandCru={isGrandCru} />
+
+      {/* Snapshot do dia atual — receita e ROAS especificamente de hoje */}
+      <div className="bg-white border border-evino-gray-200 rounded-evino p-4 shadow-sm">
+        <h4 className="font-display text-sm font-semibold text-evino-ink mb-0.5">Hoje</h4>
+        <p className="text-xs text-evino-gray-500 mb-3">
+          {isGrandCru ? 'Receita Meta Ads' : 'Receita LC (Redshift)'} e ROAS · {todayStr}
+        </p>
+        <div className="grid grid-cols-2 gap-4">
+          <MetricCard label="Receita (hoje)" value={formatCurrency(todayRevenue)} highlight />
+          <MetricCard label="ROAS (hoje)" value={`${todayRoas.toFixed(2)}x`} highlight />
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // ── Tabela: Visão geral de todos os criativos (dados reais do Redshift) ──────

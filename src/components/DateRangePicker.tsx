@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { Calendar } from 'lucide-react';
+import { spOffsetDateStr } from '@/lib/utils/date';
 
 export function DateRangePicker() {
   const router = useRouter();
@@ -29,11 +30,9 @@ export function DateRangePicker() {
     return 'custom';
   };
 
-  const getOffsetDateStr = (daysAgo: number): string => {
-    const d = new Date();
-    d.setDate(d.getDate() - daysAgo);
-    return d.toISOString().split('T')[0];
-  };
+  // Data local de São Paulo (mesmo fuso usado no filtro do Redshift), para que
+  // "Hoje" represente o dia local inteiro (00:00–23:59) em vez do dia UTC.
+  const getOffsetDateStr = (daysAgo: number): string => spOffsetDateStr(daysAgo);
 
   const calculatedPreset = getSelectedOption();
   const [activePreset, setActivePreset] = useState<string>(calculatedPreset);

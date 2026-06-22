@@ -23,6 +23,12 @@ const FACEBOOK_WHERE = `
 
 const pk = 'f.src_id_order_item';
 
+// `created_at_datetime` é gravado em UTC. Convertendo para o fuso de São Paulo,
+// o filtro/agrupamento por data passa a representar o dia local inteiro
+// (00:00–23:59), batendo com o relatório manual (Looker) em vez de cortar
+// pedidos nas bordas do dia por causa do deslocamento UTC.
+const ORDER_DATE_LOCAL = `DATE(CONVERT_TIMEZONE('America/Sao_Paulo', f.created_at_datetime))`;
+
 export interface RedshiftCampaignRow {
   utm_campaign: string;
   total_revenue: number;
@@ -55,7 +61,7 @@ export async function getOrdersByCampaign(
     LEFT JOIN dora_red_aggregations.ev_last_click_full lc
       ON lc.src_id_order = f.src_id_order
     WHERE
-      DATE(f.created_at_datetime::timestamp) BETWEEN $1 AND $2
+      ${ORDER_DATE_LOCAL} BETWEEN $1 AND $2
       AND ${FACEBOOK_WHERE}
     GROUP BY 1
     ORDER BY total_revenue DESC
@@ -151,7 +157,7 @@ export async function getGrandCruOrdersByCampaign(
     LEFT JOIN dora_red_aggregations.gc_last_click_full AS lc
       ON lc.src_id_order = f.src_id_order
     WHERE
-      DATE(CAST(f.created_at_datetime AS timestamp)) BETWEEN $1 AND $2
+      ${ORDER_DATE_LOCAL} BETWEEN $1 AND $2
       AND ${GC_WHERE}
     GROUP BY 1
     ORDER BY total_orders DESC
@@ -180,7 +186,7 @@ export async function getGrandCruOrdersByCreative(
     LEFT JOIN dora_red_aggregations.gc_last_click_full AS lc
       ON lc.src_id_order = f.src_id_order
     WHERE
-      DATE(CAST(f.created_at_datetime AS timestamp)) BETWEEN $1 AND $2
+      ${ORDER_DATE_LOCAL} BETWEEN $1 AND $2
       AND ${GC_WHERE}
     GROUP BY 1, 2
     ORDER BY total_orders DESC
@@ -208,14 +214,14 @@ export async function getOrdersByMonth(
 ): Promise<RedshiftMonthRow[]> {
   const sql = `
     SELECT
-      LEFT(CAST(DATE_TRUNC('month', DATE(f.created_at_datetime::timestamp)) AS VARCHAR), 7) AS month,
+      LEFT(CAST(DATE_TRUNC('month', ${ORDER_DATE_LOCAL}) AS VARCHAR), 7) AS month,
       ${symAgg('f.price_to_pay', pk)} + ${symAgg('f.item_shipping_amount', pk)} AS total_revenue,
       COUNT(DISTINCT f.order_increment_id) AS total_orders
     FROM dora_red_aggregations.ev_fact_order_item f
     LEFT JOIN dora_red_aggregations.ev_last_click_full lc
       ON lc.src_id_order = f.src_id_order
     WHERE
-      DATE(f.created_at_datetime::timestamp) BETWEEN $1 AND $2
+      ${ORDER_DATE_LOCAL} BETWEEN $1 AND $2
       AND ${FACEBOOK_WHERE}
     GROUP BY 1
     ORDER BY 1
@@ -227,6 +233,38 @@ export async function getOrdersByMonth(
     total_revenue: parseFloat(r.total_revenue) || 0,
     total_orders: parseInt(r.total_orders) || 0,
   }));
+}
+
+// ── Evino: totais agregados (sem agrupamento) ────────────────────────────────
+
+export interface RedshiftTotalsRow {
+  total_revenue: number;
+  total_orders: number;
+}
+
+// Receita real + pedidos totais do período (ex.: snapshot do dia atual)
+export async function getOrdersTotals(
+  since: string,
+  until: string
+): Promise<RedshiftTotalsRow> {
+  const sql = `
+    SELECT
+      ${symAgg('f.price_to_pay', pk)} + ${symAgg('f.item_shipping_amount', pk)} AS total_revenue,
+      COUNT(DISTINCT f.order_increment_id) AS total_orders
+    FROM dora_red_aggregations.ev_fact_order_item f
+    LEFT JOIN dora_red_aggregations.ev_last_click_full lc
+      ON lc.src_id_order = f.src_id_order
+    WHERE
+      ${ORDER_DATE_LOCAL} BETWEEN $1 AND $2
+      AND ${FACEBOOK_WHERE}
+  `;
+
+  const rows = await queryRedshift<any>(sql, [since, until]);
+  const r = rows[0] || {};
+  return {
+    total_revenue: parseFloat(r.total_revenue) || 0,
+    total_orders: parseInt(r.total_orders) || 0,
+  };
 }
 
 // ── Evino ─────────────────────────────────────────────────────────────────────
@@ -247,7 +285,7 @@ export async function getOrdersByCreative(
     LEFT JOIN dora_red_aggregations.ev_last_click_full lc
       ON lc.src_id_order = f.src_id_order
     WHERE
-      DATE(f.created_at_datetime::timestamp) BETWEEN $1 AND $2
+      ${ORDER_DATE_LOCAL} BETWEEN $1 AND $2
       AND ${FACEBOOK_WHERE}
     GROUP BY 1, 2
     ORDER BY total_revenue DESC
