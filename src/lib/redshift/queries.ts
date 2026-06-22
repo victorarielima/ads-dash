@@ -1,14 +1,11 @@
 import { queryRedshift } from './client';
 
-// Padrão de agregação simétrica do Looker — evita duplicação de valores
-// quando a mesma linha aparece múltiplas vezes por causa de JOINs
-function symAgg(col: string, pk: string): string {
-  const hash = `CAST(STRTOL(LEFT(MD5(CAST(${pk} AS VARCHAR)),15),16) AS DECIMAL(38,0))*1.0e8 + CAST(STRTOL(RIGHT(MD5(CAST(${pk} AS VARCHAR)),15),16) AS DECIMAL(38,0))`;
-  return `COALESCE(CAST((
-    SUM(DISTINCT CAST(FLOOR(COALESCE(${col},0)*1000000.0) AS DECIMAL(38,0)) + ${hash})
-    - SUM(DISTINCT ${hash})
-  ) AS DOUBLE PRECISION) / 1000000.0, 0)`;
-}
+// Medidas de receita/CM2 com SUM simples — replicam EXATAMENTE o relatório
+// manual (Looker), que não usa agregação simétrica. Obs.: se o LEFT JOIN com
+// ev_last_click_full gerar mais de uma linha por pedido, a receita dessas linhas
+// é contada repetida — comportamento idêntico ao Looker (que assume o join 1:1).
+const REVENUE_SUM = `COALESCE(SUM(f.price_to_pay), 0) + COALESCE(SUM(f.item_shipping_amount), 0)`;
+const CM2_SUM = `COALESCE(SUM(f.cm2_realized), 0)`;
 
 // Filtro padrão para pedidos Facebook reais (mesmos filtros do Looker)
 const FACEBOOK_WHERE = `
@@ -21,13 +18,10 @@ const FACEBOOK_WHERE = `
   AND CASE WHEN COALESCE(f.marketplace_provider, '') = 'vivino' THEN 1 ELSE 0 END = 0
 `;
 
-const pk = 'f.src_id_order_item';
-
-// `created_at_datetime` é gravado em UTC. Convertendo para o fuso de São Paulo,
-// o filtro/agrupamento por data passa a representar o dia local inteiro
-// (00:00–23:59), batendo com o relatório manual (Looker) em vez de cortar
-// pedidos nas bordas do dia por causa do deslocamento UTC.
-const ORDER_DATE_LOCAL = `DATE(CONVERT_TIMEZONE('America/Sao_Paulo', f.created_at_datetime))`;
+// `created_at_datetime` já está no horário local (mesma referência do relatório
+// manual), então usamos a data como está — sem CONVERT_TIMEZONE. Converter para
+// outro fuso deslocaria os pedidos das bordas do dia e divergiria do manual.
+const ORDER_DATE = `DATE(f.created_at_datetime::timestamp)`;
 
 export interface RedshiftCampaignRow {
   utm_campaign: string;
@@ -53,15 +47,15 @@ export async function getOrdersByCampaign(
   const sql = `
     SELECT
       COALESCE(lc.utm_campaign, '(sem utm_campaign)') AS utm_campaign,
-      ${symAgg('f.price_to_pay', pk)} + ${symAgg('f.item_shipping_amount', pk)} AS total_revenue,
+      ${REVENUE_SUM} AS total_revenue,
       COUNT(DISTINCT f.order_increment_id) AS total_orders,
       COUNT(DISTINCT CASE WHEN f.is_first_order = 1 THEN f.order_increment_id END) AS total_activations,
-      ${symAgg('f.cm2_realized', pk)} AS total_cm2
+      ${CM2_SUM} AS total_cm2
     FROM dora_red_aggregations.ev_fact_order_item f
     LEFT JOIN dora_red_aggregations.ev_last_click_full lc
       ON lc.src_id_order = f.src_id_order
     WHERE
-      ${ORDER_DATE_LOCAL} BETWEEN $1 AND $2
+      ${ORDER_DATE} BETWEEN $1 AND $2
       AND ${FACEBOOK_WHERE}
     GROUP BY 1
     ORDER BY total_revenue DESC
@@ -157,7 +151,7 @@ export async function getGrandCruOrdersByCampaign(
     LEFT JOIN dora_red_aggregations.gc_last_click_full AS lc
       ON lc.src_id_order = f.src_id_order
     WHERE
-      ${ORDER_DATE_LOCAL} BETWEEN $1 AND $2
+      ${ORDER_DATE} BETWEEN $1 AND $2
       AND ${GC_WHERE}
     GROUP BY 1
     ORDER BY total_orders DESC
@@ -186,7 +180,7 @@ export async function getGrandCruOrdersByCreative(
     LEFT JOIN dora_red_aggregations.gc_last_click_full AS lc
       ON lc.src_id_order = f.src_id_order
     WHERE
-      ${ORDER_DATE_LOCAL} BETWEEN $1 AND $2
+      ${ORDER_DATE} BETWEEN $1 AND $2
       AND ${GC_WHERE}
     GROUP BY 1, 2
     ORDER BY total_orders DESC
@@ -214,14 +208,14 @@ export async function getOrdersByMonth(
 ): Promise<RedshiftMonthRow[]> {
   const sql = `
     SELECT
-      LEFT(CAST(DATE_TRUNC('month', ${ORDER_DATE_LOCAL}) AS VARCHAR), 7) AS month,
-      ${symAgg('f.price_to_pay', pk)} + ${symAgg('f.item_shipping_amount', pk)} AS total_revenue,
+      LEFT(CAST(DATE_TRUNC('month', ${ORDER_DATE}) AS VARCHAR), 7) AS month,
+      ${REVENUE_SUM} AS total_revenue,
       COUNT(DISTINCT f.order_increment_id) AS total_orders
     FROM dora_red_aggregations.ev_fact_order_item f
     LEFT JOIN dora_red_aggregations.ev_last_click_full lc
       ON lc.src_id_order = f.src_id_order
     WHERE
-      ${ORDER_DATE_LOCAL} BETWEEN $1 AND $2
+      ${ORDER_DATE} BETWEEN $1 AND $2
       AND ${FACEBOOK_WHERE}
     GROUP BY 1
     ORDER BY 1
@@ -249,13 +243,13 @@ export async function getOrdersTotals(
 ): Promise<RedshiftTotalsRow> {
   const sql = `
     SELECT
-      ${symAgg('f.price_to_pay', pk)} + ${symAgg('f.item_shipping_amount', pk)} AS total_revenue,
+      ${REVENUE_SUM} AS total_revenue,
       COUNT(DISTINCT f.order_increment_id) AS total_orders
     FROM dora_red_aggregations.ev_fact_order_item f
     LEFT JOIN dora_red_aggregations.ev_last_click_full lc
       ON lc.src_id_order = f.src_id_order
     WHERE
-      ${ORDER_DATE_LOCAL} BETWEEN $1 AND $2
+      ${ORDER_DATE} BETWEEN $1 AND $2
       AND ${FACEBOOK_WHERE}
   `;
 
@@ -278,14 +272,14 @@ export async function getOrdersByCreative(
     SELECT
       COALESCE(lc.utm_content, '(sem utm_content)') AS utm_content,
       COALESCE(lc.utm_campaign, '') AS utm_campaign,
-      ${symAgg('f.price_to_pay', pk)} + ${symAgg('f.item_shipping_amount', pk)} AS total_revenue,
+      ${REVENUE_SUM} AS total_revenue,
       COUNT(DISTINCT f.order_increment_id) AS total_orders,
-      ${symAgg('f.cm2_realized', pk)} AS total_cm2
+      ${CM2_SUM} AS total_cm2
     FROM dora_red_aggregations.ev_fact_order_item f
     LEFT JOIN dora_red_aggregations.ev_last_click_full lc
       ON lc.src_id_order = f.src_id_order
     WHERE
-      ${ORDER_DATE_LOCAL} BETWEEN $1 AND $2
+      ${ORDER_DATE} BETWEEN $1 AND $2
       AND ${FACEBOOK_WHERE}
     GROUP BY 1, 2
     ORDER BY total_revenue DESC
