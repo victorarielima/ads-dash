@@ -12,7 +12,7 @@ import { parseActions } from '@/lib/meta/actionTypes';
 import { HierarchyFilters } from '@/components/HierarchyFilters';
 import { CreativeRangeSelector } from '@/components/creative/CreativeRangeSelector';
 import { saveReport } from '@/lib/supabase/reports';
-import { getOrdersByCampaign, getOrdersByCreative, getGrandCruOrdersByCampaign, getGrandCruOrdersByCreative, getOrdersByMonth, getOrdersTotals } from '@/lib/redshift/queries';
+import { getOrdersByCampaign, getOrdersByCreative, getGrandCruOrdersByCampaign, getGrandCruOrdersByCreative, getOrdersByMonth, getOrdersTotals, getOrdersTotalsAllChannels } from '@/lib/redshift/queries';
 import { RevenueMonthlyCharts, type MonthlyChartPoint } from '@/components/charts/RevenueMonthlyCharts';
 import { ResizableTable } from '@/components/ResizableTable';
 import { listAdAccounts } from '@/lib/meta/accounts';
@@ -949,12 +949,13 @@ async function RevenueChartsSection({
   // Snapshot do dia atual (receita real LC + investimento Meta de hoje).
   const todayRange = { since: todayStr, until: todayStr };
 
-  const [monthlyInsights, rsMonthly, yoyRsMonthly, todayInsights, rsToday] = await Promise.all([
+  const [monthlyInsights, rsMonthly, yoyRsMonthly, todayInsights, rsToday, rsTodayAllChannels] = await Promise.all([
     getInsights(accountId, { level: 'account', timeRange: sixMonthRange, timeIncrement: 'monthly' }).catch(() => []),
     !isGrandCru ? getOrdersByMonth(sixMonthRange.since, sixMonthRange.until).catch(() => []) : Promise.resolve([]),
     !isGrandCru ? getOrdersByMonth(yoySince, yoyUntil).catch(() => []) : Promise.resolve([]),
     getInsights(accountId, { level: 'account', timeRange: todayRange }).catch(() => []),
     !isGrandCru ? getOrdersTotals(todayStr, todayStr).catch(() => ({ total_revenue: 0, total_orders: 0 })) : Promise.resolve({ total_revenue: 0, total_orders: 0 }),
+    !isGrandCru ? getOrdersTotalsAllChannels(todayStr, todayStr).catch(() => 0) : Promise.resolve(0),
   ]);
 
   // Métricas de hoje: receita LC (Redshift) p/ Evino, receita Meta p/ Grand Cru.
@@ -963,6 +964,10 @@ async function RevenueChartsSection({
   const todayMetaRevenue = todayIns ? parseActions(todayIns.action_values, 'purchase') : 0;
   const todayRevenue = isGrandCru ? todayMetaRevenue : rsToday.total_revenue;
   const todayRoas = todaySpend > 0 ? todayRevenue / todaySpend : 0;
+  // Share de receita: Facebook / total de todos os canais (só Evino tem o dado LC).
+  const todayRevenueShare = !isGrandCru && rsTodayAllChannels > 0
+    ? (rsToday.total_revenue / rsTodayAllChannels) * 100
+    : null;
 
   const spendByMonth = new Map<string, number>();
   const metaRevenueByMonth = new Map<string, number>();
@@ -1023,9 +1028,12 @@ async function RevenueChartsSection({
         <p className="text-xs text-evino-gray-500 mb-3">
           {isGrandCru ? 'Receita Meta Ads' : 'Receita LC (Redshift)'} e ROAS · {todayStr}
         </p>
-        <div className="grid grid-cols-2 gap-4">
+        <div className={`grid gap-4 ${todayRevenueShare !== null ? 'grid-cols-2 lg:grid-cols-3' : 'grid-cols-2'}`}>
           <MetricCard label="Receita (hoje)" value={formatCurrency(todayRevenue)} highlight />
           <MetricCard label="ROAS (hoje)" value={`${todayRoas.toFixed(2)}x`} highlight />
+          {todayRevenueShare !== null && (
+            <MetricCard label="Share de Receita (hoje)" value={`${todayRevenueShare.toFixed(1)}%`} highlight />
+          )}
         </div>
       </div>
     </div>

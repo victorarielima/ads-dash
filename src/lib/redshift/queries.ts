@@ -1,4 +1,14 @@
 import { queryRedshift } from './client';
+import { spDateStr } from '../utils/date';
+
+// Períodos passados não mudam → cache padrão (30 min). Mas um range que inclui
+// HOJE ainda está recebendo pedidos, então o cache deixaria o valor defasado
+// (visto no painel "Hoje", ~R$200 abaixo do Looker ao vivo). Para esses casos
+// usamos um TTL curto, deixando o número praticamente em tempo real.
+const LIVE_TTL_SECONDS = 60;
+function cacheOpts(until: string) {
+  return until >= spDateStr() ? { ttlSeconds: LIVE_TTL_SECONDS } : {};
+}
 
 // Medidas de receita/CM2 com SUM simples — replicam EXATAMENTE o relatório
 // manual (Looker), que não usa agregação simétrica. Obs.: se o LEFT JOIN com
@@ -7,16 +17,23 @@ import { queryRedshift } from './client';
 const REVENUE_SUM = `COALESCE(SUM(f.price_to_pay), 0) + COALESCE(SUM(f.item_shipping_amount), 0)`;
 const CM2_SUM = `COALESCE(SUM(f.cm2_realized), 0)`;
 
-// Filtro padrão para pedidos Facebook reais (mesmos filtros do Looker)
-const FACEBOOK_WHERE = `
-  (CASE WHEN lc.utm_medium = 'Ads' AND lc.utm_campaign = 'ADVANTAGEROAS.PURCHASE'
-        THEN 'Facebook' ELSE lc.channel END) = 'Facebook'
-  AND f.is_paid = 1
+// Filtros de qualidade do pedido (valem para QUALQUER canal — mesmos do Looker).
+const BASE_WHERE = `
+  f.is_paid = 1
   AND COALESCE(UPPER(f.voucher_code), '') NOT ILIKE 'TV%'
   AND COALESCE(f.payment_method, '') <> 'sac'
   AND f.order_increment_id NOT LIKE 'BRI%'
   AND CASE WHEN COALESCE(f.marketplace_provider, '') = 'vivino' THEN 1 ELSE 0 END = 0
 `;
+
+// Condição que classifica o pedido como canal Facebook (padrão Looker).
+const FACEBOOK_CHANNEL = `
+  (CASE WHEN lc.utm_medium = 'Ads' AND lc.utm_campaign = 'ADVANTAGEROAS.PURCHASE'
+        THEN 'Facebook' ELSE lc.channel END) = 'Facebook'
+`;
+
+// Filtro padrão para pedidos Facebook reais (canal Facebook + qualidade).
+const FACEBOOK_WHERE = `${FACEBOOK_CHANNEL} AND ${BASE_WHERE}`;
 
 // `created_at_datetime` já está no horário local (mesma referência do relatório
 // manual), então usamos a data como está — sem CONVERT_TIMEZONE. Converter para
@@ -61,7 +78,7 @@ export async function getOrdersByCampaign(
     ORDER BY total_revenue DESC
   `;
 
-  const rows = await queryRedshift<any>(sql, [since, until]);
+  const rows = await queryRedshift<any>(sql, [since, until], cacheOpts(until));
   return rows.map((r) => ({
     utm_campaign: r.utm_campaign,
     total_revenue: parseFloat(r.total_revenue) || 0,
@@ -157,7 +174,7 @@ export async function getGrandCruOrdersByCampaign(
     ORDER BY total_orders DESC
   `;
 
-  const rows = await queryRedshift<any>(sql, [since, until]);
+  const rows = await queryRedshift<any>(sql, [since, until], cacheOpts(until));
   return rows.map((r) => ({
     utm_campaign: r.utm_campaign,
     total_orders: parseInt(r.total_orders) || 0,
@@ -186,7 +203,7 @@ export async function getGrandCruOrdersByCreative(
     ORDER BY total_orders DESC
   `;
 
-  const rows = await queryRedshift<any>(sql, [since, until]);
+  const rows = await queryRedshift<any>(sql, [since, until], cacheOpts(until));
   return rows.map((r) => ({
     utm_content:  r.utm_content,
     utm_campaign: r.utm_campaign,
@@ -221,7 +238,7 @@ export async function getOrdersByMonth(
     ORDER BY 1
   `;
 
-  const rows = await queryRedshift<any>(sql, [since, until]);
+  const rows = await queryRedshift<any>(sql, [since, until], cacheOpts(until));
   return rows.map((r) => ({
     month: String(r.month),
     total_revenue: parseFloat(r.total_revenue) || 0,
@@ -253,12 +270,33 @@ export async function getOrdersTotals(
       AND ${FACEBOOK_WHERE}
   `;
 
-  const rows = await queryRedshift<any>(sql, [since, until]);
+  const rows = await queryRedshift<any>(sql, [since, until], cacheOpts(until));
   const r = rows[0] || {};
   return {
     total_revenue: parseFloat(r.total_revenue) || 0,
     total_orders: parseInt(r.total_orders) || 0,
   };
+}
+
+// Receita total de TODOS os canais (sem filtro de canal), só com os filtros de
+// qualidade do pedido. Usada para o share de receita do Facebook (Facebook /
+// total). Mesma lógica do pivô por canal do Looker.
+export async function getOrdersTotalsAllChannels(
+  since: string,
+  until: string
+): Promise<number> {
+  const sql = `
+    SELECT ${REVENUE_SUM} AS total_revenue
+    FROM dora_red_aggregations.ev_fact_order_item f
+    LEFT JOIN dora_red_aggregations.ev_last_click_full lc
+      ON lc.src_id_order = f.src_id_order
+    WHERE
+      ${ORDER_DATE} BETWEEN $1 AND $2
+      AND ${BASE_WHERE}
+  `;
+
+  const rows = await queryRedshift<any>(sql, [since, until], cacheOpts(until));
+  return parseFloat(rows[0]?.total_revenue) || 0;
 }
 
 // ── Evino ─────────────────────────────────────────────────────────────────────
@@ -285,7 +323,7 @@ export async function getOrdersByCreative(
     ORDER BY total_revenue DESC
   `;
 
-  const rows = await queryRedshift<any>(sql, [since, until]);
+  const rows = await queryRedshift<any>(sql, [since, until], cacheOpts(until));
   return rows.map((r) => ({
     utm_content: r.utm_content,
     utm_campaign: r.utm_campaign,
