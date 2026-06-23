@@ -1051,22 +1051,43 @@ async function AllCreativesTable({
   isGrandCru: boolean;
   currentRange: { since: string; until: string };
 }) {
-  const rsRows = isGrandCru
-    ? await getGrandCruOrdersByCreative(currentRange.since, currentRange.until).catch(() => [])
-    : await getOrdersByCreative(currentRange.since, currentRange.until).catch(() => []);
+  // Receita real (Redshift, por utm_content) + investimento da Meta (por ad_name).
+  const [rsRows, adInsights] = await Promise.all([
+    isGrandCru
+      ? getGrandCruOrdersByCreative(currentRange.since, currentRange.until).catch(() => [])
+      : getOrdersByCreative(currentRange.since, currentRange.until).catch(() => []),
+    isGrandCru
+      ? Promise.resolve([])
+      : getInsights(accountId, { level: 'ad', timeRange: currentRange }).catch(() => []),
+  ]);
 
-  const rows = (rsRows as any[]).map((r) => ({
-    name: r.utm_content,
-    campaign: r.utm_campaign || '',
-    revenue: r.total_revenue ?? 0,
-    orders: r.total_orders ?? 0,
-    cm2: r.total_cm2 ?? 0,
-    ticketMedio: (r.total_orders ?? 0) > 0 ? (r.total_revenue ?? 0) / r.total_orders : 0,
-    cm2Pct: (r.total_revenue ?? 0) > 0 ? ((r.total_cm2 ?? 0) / r.total_revenue) * 100 : 0,
-  }));
+  // Investimento por criativo: casa utm_content (Redshift) com ad_name (Meta).
+  const spendByContent = new Map<string, number>();
+  for (const ins of adInsights) {
+    const key = (ins.ad_name || '').trim();
+    if (!key) continue;
+    spendByContent.set(key, (spendByContent.get(key) || 0) + parseFloat(ins.spend || '0'));
+  }
+
+  const rows = (rsRows as any[]).map((r) => {
+    const revenue = r.total_revenue ?? 0;
+    const spend = spendByContent.get((r.utm_content || '').trim()) ?? 0;
+    const roas = spend > 0 && revenue > 0 ? revenue / spend : 0;
+    return {
+      name: r.utm_content,
+      campaign: r.utm_campaign || '',
+      revenue,
+      spend,
+      roas,
+      orders: r.total_orders ?? 0,
+      cm2: r.total_cm2 ?? 0,
+      ticketMedio: (r.total_orders ?? 0) > 0 ? (r.total_revenue ?? 0) / r.total_orders : 0,
+      cm2Pct: (r.total_revenue ?? 0) > 0 ? ((r.total_cm2 ?? 0) / r.total_revenue) * 100 : 0,
+    };
+  });
 
   const maxRevenue = rows[0]?.revenue || 1;
-  const colSpanCount = isGrandCru ? 3 : 6;
+  const colSpanCount = isGrandCru ? 3 : 8;
 
   return (
     <div className="bg-white border border-evino-gray-200 rounded-evino shadow-sm overflow-hidden">
@@ -1085,7 +1106,9 @@ async function AllCreativesTable({
               <th className="p-3 text-right whitespace-nowrap">Pedidos</th>
               {!isGrandCru && (
                 <>
+                  <th className="p-3 text-right whitespace-nowrap">Investido</th>
                   <th className="p-3 min-w-[240px] whitespace-nowrap">Receita Total c/ Frete</th>
+                  <th className="p-3 text-center whitespace-nowrap">ROAS LC</th>
                   <th className="p-3 text-center whitespace-nowrap">Ticket Médio</th>
                   <th className="p-3 text-center whitespace-nowrap">CM2 (%)</th>
                 </>
@@ -1123,6 +1146,9 @@ async function AllCreativesTable({
                     </td>
                     {!isGrandCru && (
                       <>
+                        <td className="p-3 text-right font-mono text-xs tabular-nums text-evino-ink">
+                          {formatCurrency(row.spend)}
+                        </td>
                         <td className="p-3">
                           <div className="flex items-center gap-2">
                             <div className="flex-1 h-4 bg-evino-gray-100 rounded overflow-hidden min-w-[40px]">
@@ -1132,6 +1158,11 @@ async function AllCreativesTable({
                               {formatCurrency(row.revenue)}
                             </span>
                           </div>
+                        </td>
+                        <td className="p-3 text-center">
+                          <span className={`inline-block min-w-[52px] px-2 py-0.5 rounded text-xs font-bold ${getRoasColorClass(row.roas)}`}>
+                            {row.roas > 0 ? row.roas.toFixed(2) : '-'}
+                          </span>
                         </td>
                         <td className="p-3 text-center">
                           <span className={`inline-block min-w-[80px] px-2 py-0.5 rounded text-xs font-bold ${getTicketColorClass(row.ticketMedio)}`}>
