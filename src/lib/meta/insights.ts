@@ -9,6 +9,8 @@ interface InsightParams {
   timeIncrement?: number | string; // '1' para diário, ou não passar para acumulado
   breakdowns?: string;
   actionAttributionWindows?: string[];
+  limit?: number;      // tamanho de página da Graph API
+  paginate?: boolean;  // segue paging.next até acabar (ex.: todos os anúncios da conta)
 }
 
 export async function getInsights(
@@ -48,24 +50,42 @@ export async function getInsights(
     metaParams['action_attribution_windows'] = params.actionAttributionWindows;
   }
 
+  if (params.limit) {
+    metaParams['limit'] = params.limit;
+  }
+
   // O endpoint de insights na Meta Graph API é sempre /{entity_id}/insights
   const endpoint = `${entityId}/insights`;
-  
+
   // O id da conta é necessário para o controle de cache / rate limit
   const accountId = entityId.startsWith('act_') ? entityId : 'account_generic';
 
   try {
-    const response = await requestMeta<any>(accountId, endpoint, {
-      params: metaParams,
-      ttlSeconds: options.ttlSeconds || 900, // 15 minutos
-      skipCache: options.skipCache,
-    });
+    // A Graph API retorna no máx. ~25 linhas por página por padrão. Sem paginar,
+    // consultas amplas (ex.: todos os anúncios da conta) vêm truncadas. Quando
+    // paginate=true, seguimos o cursor `after` até esgotar (com teto de segurança).
+    const results: Insight[] = [];
+    let after: string | undefined;
+    let pages = 0;
+    const maxPages = params.paginate ? 50 : 1;
 
-    if (response && response.data) {
-      return response.data as Insight[];
-    }
+    do {
+      const pageParams = after ? { ...metaParams, after } : metaParams;
+      const response = await requestMeta<any>(accountId, endpoint, {
+        params: pageParams,
+        ttlSeconds: options.ttlSeconds || 900, // 15 minutos
+        skipCache: options.skipCache,
+      });
 
-    return (response || []) as Insight[];
+      const data = (response?.data ?? response ?? []) as Insight[];
+      results.push(...data);
+
+      // Só continua se houver próxima página E ainda tivermos cursor.
+      after = response?.paging?.next ? response?.paging?.cursors?.after : undefined;
+      pages++;
+    } while (after && pages < maxPages);
+
+    return results;
   } catch (error) {
     console.error(`Erro ao buscar insights para a entidade ${entityId}:`, error);
     throw error;

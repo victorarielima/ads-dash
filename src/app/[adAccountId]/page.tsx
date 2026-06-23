@@ -1058,20 +1058,25 @@ async function AllCreativesTable({
       : getOrdersByCreative(currentRange.since, currentRange.until).catch(() => []),
     isGrandCru
       ? Promise.resolve([])
-      : getInsights(accountId, { level: 'ad', timeRange: currentRange }).catch(() => []),
+      : getInsights(accountId, { level: 'ad', timeRange: currentRange, paginate: true, limit: 500 }).catch(() => []),
   ]);
 
-  // Investimento por criativo: casa utm_content (Redshift) com ad_name (Meta).
+  // Investimento por criativo: casa (utm_campaign + utm_content) do Redshift com
+  // (campaign_name + ad_name) da Meta. Usar a campanha além do nome do criativo
+  // evita somar/duplicar o spend quando o mesmo criativo roda em + de 1 campanha.
+  const norm = (s?: string) => (s || '').trim();
+  const spendKey = (campaign: string, creative: string) => `${norm(campaign)}|||${norm(creative)}`;
   const spendByContent = new Map<string, number>();
   for (const ins of adInsights) {
-    const key = (ins.ad_name || '').trim();
-    if (!key) continue;
+    const name = norm(ins.ad_name);
+    if (!name) continue;
+    const key = spendKey(ins.campaign_name || '', name);
     spendByContent.set(key, (spendByContent.get(key) || 0) + parseFloat(ins.spend || '0'));
   }
 
   const rows = (rsRows as any[]).map((r) => {
     const revenue = r.total_revenue ?? 0;
-    const spend = spendByContent.get((r.utm_content || '').trim()) ?? 0;
+    const spend = spendByContent.get(spendKey(r.utm_campaign || '', r.utm_content || '')) ?? 0;
     const roas = spend > 0 && revenue > 0 ? revenue / spend : 0;
     return {
       name: r.utm_content,
