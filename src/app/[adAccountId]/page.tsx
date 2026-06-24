@@ -1111,7 +1111,7 @@ async function AllCreativesTable({
               {!isGrandCru && (
                 <>
                   <th className="p-3 text-right whitespace-nowrap">Investido</th>
-                  <th className="p-3 min-w-[240px] whitespace-nowrap">Receita Total c/ Frete</th>
+                  <th className="p-3 text-center min-w-[240px] whitespace-nowrap">Receita Total c/ Frete</th>
                   <th className="p-3 text-center whitespace-nowrap">ROAS LC</th>
                   <th className="p-3 text-center whitespace-nowrap">Ticket Médio</th>
                   <th className="p-3 text-center whitespace-nowrap">CM2 (%)</th>
@@ -1152,7 +1152,7 @@ async function AllCreativesTable({
                         <td className="p-3 text-right font-mono text-xs tabular-nums text-evino-ink">
                           {formatCurrency(row.spend)}
                         </td>
-                        <td className="p-3 text-right font-mono text-xs tabular-nums text-evino-ink whitespace-nowrap">
+                        <td className="p-3 text-center font-mono text-xs tabular-nums text-evino-ink whitespace-nowrap">
                           {formatCurrency(row.revenue)}
                         </td>
                         <td className="p-3 text-center">
