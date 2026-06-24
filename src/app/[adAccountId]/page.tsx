@@ -1091,7 +1091,6 @@ async function AllCreativesTable({
     };
   });
 
-  const maxRevenue = rows[0]?.revenue || 1;
   const colSpanCount = isGrandCru ? 3 : 8;
 
   return (
@@ -1129,7 +1128,6 @@ async function AllCreativesTable({
               </tr>
             ) : (
               rows.map((row, idx) => {
-                const barPct = maxRevenue > 0 ? (row.revenue / maxRevenue) * 100 : 0;
                 return (
                   <tr key={`${row.name}-${idx}`} className={idx % 2 === 0 ? 'bg-white' : 'bg-evino-gray-50/50'}>
                     <td className="p-3 text-center text-evino-gray-400 text-xs font-mono">{idx + 1}</td>
@@ -1154,15 +1152,8 @@ async function AllCreativesTable({
                         <td className="p-3 text-right font-mono text-xs tabular-nums text-evino-ink">
                           {formatCurrency(row.spend)}
                         </td>
-                        <td className="p-3">
-                          <div className="flex items-center gap-2">
-                            <div className="flex-1 h-4 bg-evino-gray-100 rounded overflow-hidden min-w-[40px]">
-                              <div className="h-full bg-indigo-500 rounded transition-[width] duration-300" style={{ width: `${barPct}%` }} />
-                            </div>
-                            <span className="font-mono text-xs tabular-nums text-evino-ink whitespace-nowrap">
-                              {formatCurrency(row.revenue)}
-                            </span>
-                          </div>
+                        <td className="p-3 text-right font-mono text-xs tabular-nums text-evino-ink whitespace-nowrap">
+                          {formatCurrency(row.revenue)}
                         </td>
                         <td className="p-3 text-center">
                           <span className={`inline-block min-w-[52px] px-2 py-0.5 rounded text-xs font-bold ${getRoasColorClass(row.roas)}`}>
