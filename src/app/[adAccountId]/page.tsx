@@ -49,9 +49,10 @@ export default async function AccountOverviewPage({ params, searchParams }: Over
   const currentSince = since || defaultSince;
   const currentUntil = until || defaultUntil;
 
-  // Filtro "hoje": início = fim = data de hoje. Só nesse caso a coluna
-  // "ROAS LC (mês)" (período anterior = dia anterior) deve aparecer.
-  const isToday = currentSince === currentUntil && currentUntil === defaultUntil;
+  // Coluna "ROAS LC (período anterior)": aparece em todos os presets de período
+  // (hoje, ontem, 7/30/90 dias) e some no "Personalizado". O rótulo descreve o
+  // período anterior equivalente (ex.: "Ontem" quando o filtro é "Hoje").
+  const prevPeriod = getPrevPeriodColumn(currentSince, currentUntil, defaultUntil);
 
   // 2. Calcula o período de duração equivalente anterior para cálculo do delta
   const sDate = new Date(currentSince + 'T00:00:00');
@@ -145,7 +146,8 @@ export default async function AccountOverviewPage({ params, searchParams }: Over
               isGrandCru={isGrandCru}
               currentRange={{ since: currentSince, until: currentUntil }}
               prevRange={{ since: prevSince, until: prevUntil }}
-              isToday={isToday}
+              showPrevRoas={prevPeriod.show}
+              prevLabel={prevPeriod.label}
             />
           </Suspense>
           <Suspense fallback={<TableSkeleton />}>
@@ -733,14 +735,26 @@ function getTicketColorClass(ticket: number): string {
   return 'bg-orange-400 text-white';
 }
 
-function getPrevPeriodLabel(since: string): string {
-  try {
-    return new Intl.DateTimeFormat('pt-BR', { month: 'long' }).format(
-      new Date(since + 'T00:00:00')
-    );
-  } catch {
-    return 'Per. Anterior';
-  }
+// Define se a coluna "ROAS LC (período anterior)" deve aparecer e seu rótulo.
+// Regra: em qualquer preset de período (hoje, ontem, 7/30/90 dias) a coluna
+// mostra o ROAS do período imediatamente anterior de MESMA duração — hoje→ontem,
+// 7 dias→7 dias anteriores, etc. No "Personalizado" não há período anterior
+// canônico, então a coluna é omitida. (todayStr é a data local de SP.)
+function getPrevPeriodColumn(
+  since: string,
+  until: string,
+  todayStr: string
+): { show: boolean; label: string } {
+  const diffDays = Math.round(
+    (new Date(until + 'T00:00:00').getTime() - new Date(since + 'T00:00:00').getTime()) / 86_400_000
+  );
+
+  if (diffDays === 0 && since === todayStr) return { show: true, label: 'Ontem' };
+  if (diffDays === 0 && since === spOffsetDateStr(1)) return { show: true, label: 'Anteontem' };
+  if (diffDays === 6 && until === todayStr) return { show: true, label: '7d ant.' };
+  if (diffDays === 29 && until === todayStr) return { show: true, label: '30d ant.' };
+  if (diffDays === 89 && until === todayStr) return { show: true, label: '90d ant.' };
+  return { show: false, label: '' };
 }
 
 // ── Tabela: Visão geral de todas as campanhas ────────────────────────────────
@@ -750,13 +764,15 @@ async function AllCampaignsTable({
   isGrandCru,
   currentRange,
   prevRange,
-  isToday,
+  showPrevRoas,
+  prevLabel,
 }: {
   accountId: string;
   isGrandCru: boolean;
   currentRange: { since: string; until: string };
   prevRange: { since: string; until: string };
-  isToday: boolean;
+  showPrevRoas: boolean;
+  prevLabel: string;
 }) {
   // Meta: invest + ROAS período anterior; Redshift: receita real / ativações.
   // IMPORTANTE: o que chamamos de "campanha" aqui é, na verdade, o conjunto de
@@ -816,10 +832,10 @@ async function AllCampaignsTable({
 
   const totalSpend = rows.reduce((s, r) => s + r.spend, 0);
   const totalRevenue = rows.reduce((s, r) => s + r.revenue, 0);
-  const prevLabel = getPrevPeriodLabel(prevRange.since);
 
-  // A coluna "ROAS LC (mês)" (período anterior) só aparece no filtro "hoje".
-  const campaignColSpan = (isGrandCru ? 7 : 9) - (isToday ? 0 : 1);
+  // A coluna "ROAS LC (período anterior)" aparece em todos os presets de período
+  // e some no "Personalizado" (showPrevRoas).
+  const campaignColSpan = (isGrandCru ? 7 : 9) - (showPrevRoas ? 0 : 1);
 
   return (
     <div className="bg-white border border-evino-gray-200 rounded-evino shadow-sm overflow-hidden">
@@ -843,7 +859,7 @@ async function AllCampaignsTable({
                 </>
               )}
               <th className="p-3 text-center whitespace-nowrap">{isGrandCru ? 'ROAS Meta' : 'ROAS LC'}</th>
-              {isToday && (
+              {showPrevRoas && (
                 <th className="p-3 text-center whitespace-nowrap capitalize">{isGrandCru ? `ROAS Meta ${prevLabel}` : `ROAS LC ${prevLabel}`}</th>
               )}
               <th className="p-3 text-right whitespace-nowrap">Ativações</th>
@@ -893,7 +909,7 @@ async function AllCampaignsTable({
                         {row.roas > 0 ? row.roas.toFixed(2) : '0.00'}
                       </span>
                     </td>
-                    {isToday && (
+                    {showPrevRoas && (
                       <td className="p-3 text-center font-mono text-xs tabular-nums text-evino-gray-600">
                         {row.prevRoas !== null ? row.prevRoas.toFixed(2) : '-'}
                       </td>
