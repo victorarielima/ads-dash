@@ -167,4 +167,5 @@ export interface Insight {
   platform_position?: string;
   impression_device?: string;
   device_platform?: string;
+  hourly_stats_aggregated_by_advertiser_time_zone?: string;
 }

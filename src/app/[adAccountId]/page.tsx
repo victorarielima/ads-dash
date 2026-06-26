@@ -1,6 +1,6 @@
 import { Suspense } from 'react';
 import Link from 'next/link';
-import { getInsights } from '@/lib/meta/insights';
+import { getInsights, getInsightsWithBreakdowns } from '@/lib/meta/insights';
 import { getCampaigns, getAds, getAdDetail, getAdSetsByCampaign } from '@/lib/meta/creative';
 import { MetricCard } from '@/components/cards/MetricCard';
 import { TimelineChart } from '@/components/charts/TimelineChart';
@@ -12,8 +12,9 @@ import { parseActions } from '@/lib/meta/actionTypes';
 import { HierarchyFilters } from '@/components/HierarchyFilters';
 import { CreativeRangeSelector } from '@/components/creative/CreativeRangeSelector';
 import { saveReport } from '@/lib/supabase/reports';
-import { getOrdersByCampaign, getOrdersByCreative, getGrandCruOrdersByCampaign, getGrandCruOrdersByCreative, getOrdersByMonth, getOrdersTotals, getOrdersTotalsAllChannels } from '@/lib/redshift/queries';
+import { getOrdersByCampaign, getOrdersByCreative, getGrandCruOrdersByCampaign, getGrandCruOrdersByCreative, getOrdersByMonth, getOrdersByHour, getOrdersTotals, getOrdersTotalsAllChannels } from '@/lib/redshift/queries';
 import { RevenueMonthlyCharts, type MonthlyChartPoint } from '@/components/charts/RevenueMonthlyCharts';
+import { HourlyRoasChart, type HourlyRoasPoint } from '@/components/charts/HourlyRoasChart';
 import { ResizableTable } from '@/components/ResizableTable';
 import { listAdAccounts } from '@/lib/meta/accounts';
 
@@ -138,6 +139,14 @@ export default async function AccountOverviewPage({ params, searchParams }: Over
             <RevenueChartsSection
               accountId={adAccountId}
               isGrandCru={isGrandCru}
+            />
+          </Suspense>
+          <Suspense fallback={<ChartSkeleton />}>
+            {/* ROAS por hora do dia — segue o filtro de período selecionado */}
+            <HourlyRoasSection
+              accountId={adAccountId}
+              isGrandCru={isGrandCru}
+              currentRange={{ since: currentSince, until: currentUntil }}
             />
           </Suspense>
           <Suspense fallback={<TableSkeleton />}>
@@ -1058,6 +1067,67 @@ async function RevenueChartsSection({
         </div>
       </div>
     </div>
+  );
+}
+
+// ── Gráfico: ROAS por hora do dia (segue o filtro de período) ─────────────────
+
+async function HourlyRoasSection({
+  accountId,
+  isGrandCru,
+  currentRange,
+}: {
+  accountId: string;
+  isGrandCru: boolean;
+  currentRange: { since: string; until: string };
+}) {
+  // Spend por hora (Meta, breakdown horário) + receita por hora (Redshift p/ Evino;
+  // Meta p/ Grand Cru). Sem time_increment, a Meta já agrega o spend de cada hora
+  // somando todas as datas do período — mesma lógica do getOrdersByHour no Redshift.
+  const [hourlyInsights, rsHours] = await Promise.all([
+    getInsightsWithBreakdowns(accountId, 'hourly', { timeRange: currentRange }, 'account').catch(() => []),
+    isGrandCru ? Promise.resolve([]) : getOrdersByHour(currentRange.since, currentRange.until).catch(() => []),
+  ]);
+
+  // Agrega spend (e receita Meta) por hora 0–23 a partir do bucket "HH:00:00 - HH:59:59".
+  const spendByHour = new Map<number, number>();
+  const metaRevenueByHour = new Map<number, number>();
+  for (const ins of hourlyInsights) {
+    const bucket = ins.hourly_stats_aggregated_by_advertiser_time_zone;
+    if (!bucket) continue;
+    const hour = parseInt(bucket.slice(0, 2));
+    if (Number.isNaN(hour)) continue;
+    spendByHour.set(hour, (spendByHour.get(hour) || 0) + parseFloat(ins.spend || '0'));
+    metaRevenueByHour.set(hour, (metaRevenueByHour.get(hour) || 0) + parseActions(ins.action_values, 'purchase'));
+  }
+
+  const rsRevenueByHour = new Map<number, number>();
+  for (const r of rsHours as any[]) {
+    rsRevenueByHour.set(r.hour, r.total_revenue ?? 0);
+  }
+
+  const data: HourlyRoasPoint[] = Array.from({ length: 24 }, (_, hour) => {
+    const spend = spendByHour.get(hour) || 0;
+    const revenue = isGrandCru ? (metaRevenueByHour.get(hour) || 0) : (rsRevenueByHour.get(hour) || 0);
+    const roas = spend > 0 ? revenue / spend : 0;
+    return {
+      hour,
+      label: `${String(hour).padStart(2, '0')}h`,
+      roas,
+      revenue,
+      spend,
+    };
+  });
+
+  // Sem nenhum spend no período → não renderiza o gráfico.
+  if (data.every((d) => d.spend === 0)) return null;
+
+  return (
+    <HourlyRoasChart
+      data={data}
+      isGrandCru={isGrandCru}
+      rangeLabel={`${currentRange.since} até ${currentRange.until}`}
+    />
   );
 }
 

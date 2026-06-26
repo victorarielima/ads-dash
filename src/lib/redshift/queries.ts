@@ -246,6 +246,44 @@ export async function getOrdersByMonth(
   }));
 }
 
+// ── Evino: receita por hora do dia ───────────────────────────────────────────
+
+export interface RedshiftHourRow {
+  hour: number; // 0–23 (fuso local, mesma referência do relatório manual)
+  total_revenue: number;
+  total_orders: number;
+}
+
+// Receita real agregada por hora do dia, somando todas as datas do período. Ex.:
+// em "últimos 7 dias", a hora 14 traz a soma da receita das 14h dos 7 dias. Útil
+// para ver a curva de ROAS ao longo do dia (combinado com o spend horário da Meta).
+export async function getOrdersByHour(
+  since: string,
+  until: string
+): Promise<RedshiftHourRow[]> {
+  const sql = `
+    SELECT
+      EXTRACT(HOUR FROM f.created_at_datetime::timestamp) AS hour,
+      ${REVENUE_SUM} AS total_revenue,
+      COUNT(DISTINCT f.order_increment_id) AS total_orders
+    FROM dora_red_aggregations.ev_fact_order_item f
+    LEFT JOIN dora_red_aggregations.ev_last_click_full lc
+      ON lc.src_id_order = f.src_id_order
+    WHERE
+      ${ORDER_DATE} BETWEEN $1 AND $2
+      AND ${FACEBOOK_WHERE}
+    GROUP BY 1
+    ORDER BY 1
+  `;
+
+  const rows = await queryRedshift<any>(sql, [since, until], cacheOpts(until));
+  return rows.map((r) => ({
+    hour: parseInt(r.hour) || 0,
+    total_revenue: parseFloat(r.total_revenue) || 0,
+    total_orders: parseInt(r.total_orders) || 0,
+  }));
+}
+
 // ── Evino: totais agregados (sem agrupamento) ────────────────────────────────
 
 export interface RedshiftTotalsRow {
