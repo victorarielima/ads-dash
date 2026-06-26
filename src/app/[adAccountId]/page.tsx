@@ -10,6 +10,7 @@ import { calculateDelta } from '@/lib/utils/delta';
 import { spDateStr, spOffsetDateStr } from '@/lib/utils/date';
 import { parseActions } from '@/lib/meta/actionTypes';
 import { HierarchyFilters } from '@/components/HierarchyFilters';
+import { SegmentFilter } from '@/components/SegmentFilter';
 import { CreativeRangeSelector } from '@/components/creative/CreativeRangeSelector';
 import { saveReport } from '@/lib/supabase/reports';
 import { getOrdersByCampaign, getOrdersByCreative, getGrandCruOrdersByCampaign, getGrandCruOrdersByCreative, getOrdersByMonth, getOrdersByHour, getOrdersTotals, getOrdersTotalsAllChannels } from '@/lib/redshift/queries';
@@ -28,6 +29,7 @@ interface OverviewPageProps {
     campaign_id?: string;
     adset_id?: string;
     creative_range?: string;
+    segment?: string;
   }>;
 }
 
@@ -40,7 +42,7 @@ export default async function AccountOverviewPage({ params, searchParams }: Over
     return null;
   }
   
-  const { since, until, campaign_id, adset_id, creative_range } = await searchParams;
+  const { since, until, campaign_id, adset_id, creative_range, segment } = await searchParams;
 
   // 1. Define as datas padrão (últimos 30 dias se ausente na URL).
   // Datas no fuso de São Paulo para casar com o filtro local do Redshift.
@@ -149,6 +151,11 @@ export default async function AccountOverviewPage({ params, searchParams }: Over
               currentRange={{ since: currentSince, until: currentUntil }}
             />
           </Suspense>
+          {/* Filtro de segmento (Ecom / Clube) — aplica às tabelas abaixo */}
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <span className="text-xs font-bold text-evino-gray-400 uppercase tracking-wider">Segmento</span>
+            <SegmentFilter />
+          </div>
           <Suspense fallback={<TableSkeleton />}>
             <AllCampaignsTable
               accountId={adAccountId}
@@ -157,6 +164,7 @@ export default async function AccountOverviewPage({ params, searchParams }: Over
               prevRange={{ since: prevSince, until: prevUntil }}
               showPrevRoas={prevPeriod.show}
               prevLabel={prevPeriod.label}
+              segment={segment}
             />
           </Suspense>
           <Suspense fallback={<TableSkeleton />}>
@@ -164,6 +172,7 @@ export default async function AccountOverviewPage({ params, searchParams }: Over
               accountId={adAccountId}
               isGrandCru={isGrandCru}
               currentRange={{ since: currentSince, until: currentUntil }}
+              segment={segment}
             />
           </Suspense>
         </div>
@@ -766,6 +775,16 @@ function getPrevPeriodColumn(
   return { show: false, label: '' };
 }
 
+// Classifica/filtra pelo segmento embutido no nome do conjunto de anúncios:
+// "Evino-Ecomm-…" (ecom) vs "Evino-Clube-…" (clube). segment vazio = todos.
+function matchesSegment(name: string, segment?: string): boolean {
+  const seg = (segment || '').toLowerCase();
+  if (seg !== 'ecom' && seg !== 'clube') return true;
+  const n = (name || '').toLowerCase();
+  if (seg === 'ecom') return n.includes('ecom');
+  return n.includes('clube');
+}
+
 // ── Tabela: Visão geral de todas as campanhas ────────────────────────────────
 
 async function AllCampaignsTable({
@@ -775,6 +794,7 @@ async function AllCampaignsTable({
   prevRange,
   showPrevRoas,
   prevLabel,
+  segment,
 }: {
   accountId: string;
   isGrandCru: boolean;
@@ -782,6 +802,7 @@ async function AllCampaignsTable({
   prevRange: { since: string; until: string };
   showPrevRoas: boolean;
   prevLabel: string;
+  segment?: string;
 }) {
   // Meta: invest + ROAS período anterior; Redshift: receita real / ativações.
   // IMPORTANTE: o que chamamos de "campanha" aqui é, na verdade, o conjunto de
@@ -837,6 +858,7 @@ async function AllCampaignsTable({
         cac,
       };
     })
+    .filter((r) => matchesSegment(r.name, segment))
     .sort((a, b) => b.spend - a.spend);
 
   const totalSpend = rows.reduce((s, r) => s + r.spend, 0);
@@ -1137,10 +1159,12 @@ async function AllCreativesTable({
   accountId,
   isGrandCru,
   currentRange,
+  segment,
 }: {
   accountId: string;
   isGrandCru: boolean;
   currentRange: { since: string; until: string };
+  segment?: string;
 }) {
   // Receita real (Redshift, por utm_content) + investimento da Meta (por ad_name).
   const [rsRows, adInsights] = await Promise.all([
@@ -1182,7 +1206,7 @@ async function AllCreativesTable({
       ticketMedio: (r.total_orders ?? 0) > 0 ? (r.total_revenue ?? 0) / r.total_orders : 0,
       cm2Pct: (r.total_revenue ?? 0) > 0 ? ((r.total_cm2 ?? 0) / r.total_revenue) * 100 : 0,
     };
-  });
+  }).filter((row) => matchesSegment(row.campaign, segment));
 
   const colSpanCount = isGrandCru ? 3 : 8;
 
