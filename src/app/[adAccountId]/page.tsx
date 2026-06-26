@@ -758,21 +758,26 @@ async function AllCampaignsTable({
   prevRange: { since: string; until: string };
   isToday: boolean;
 }) {
-  // Meta: invest + ROAS período anterior; Redshift: receita real / ativações
+  // Meta: invest + ROAS período anterior; Redshift: receita real / ativações.
+  // IMPORTANTE: o que chamamos de "campanha" aqui é, na verdade, o conjunto de
+  // anúncios (ad group/adset) da Meta. O Looker/Redshift expõe o nome do adset na
+  // coluna utm_campaign, então puxamos os insights no nível 'adset' e casamos a
+  // receita por adset_name (não campaign_name) — isso evita divergências quando
+  // uma campanha tem mais de um adset (ex.: "premium" e "premium v2").
   const [currentInsights, prevInsights, rsRows] = await Promise.all([
-    getInsights(accountId, { level: 'campaign', timeRange: currentRange }).catch(() => []),
-    getInsights(accountId, { level: 'campaign', timeRange: prevRange }).catch(() => []),
+    getInsights(accountId, { level: 'adset', timeRange: currentRange, paginate: true, limit: 500 }).catch(() => []),
+    getInsights(accountId, { level: 'adset', timeRange: prevRange, paginate: true, limit: 500 }).catch(() => []),
     isGrandCru
       ? getGrandCruOrdersByCampaign(currentRange.since, currentRange.until).catch(() => [])
       : getOrdersByCampaign(currentRange.since, currentRange.until).catch(() => []),
   ]);
 
-  const prevRoasByCampaign = new Map<string, number>();
+  const prevRoasByAdset = new Map<string, number>();
   for (const ins of prevInsights) {
     const spend = parseFloat(ins.spend || '0');
     const revenue = parseActions(ins.action_values, 'purchase');
     const roas = spend > 0 ? revenue / spend : 0;
-    if (ins.campaign_id) prevRoasByCampaign.set(ins.campaign_id, roas);
+    if (ins.adset_id) prevRoasByAdset.set(ins.adset_id, roas);
   }
 
   const rsMap = new Map(rsRows.map((r) => [r.utm_campaign, r]));
@@ -780,7 +785,7 @@ async function AllCampaignsTable({
   const rows = currentInsights
     .map((ins) => {
       const spend = parseFloat(ins.spend || '0');
-      const name = ins.campaign_name || 'Campanha Desconhecida';
+      const name = ins.adset_name || 'Conjunto Desconhecido';
       const rs = rsMap.get(name) as any;
 
       const revenue = isGrandCru ? 0 : (rs?.total_revenue ?? 0);
@@ -796,14 +801,14 @@ async function AllCampaignsTable({
       const cac = activations > 0 ? spend / activations : 0;
 
       return {
-        id: ins.campaign_id || '',
+        id: ins.adset_id || '',
         name,
         spend,
         revenue,
         activations,
         cm2,
         roas,
-        prevRoas: prevRoasByCampaign.get(ins.campaign_id || '') ?? null,
+        prevRoas: prevRoasByAdset.get(ins.adset_id || '') ?? null,
         cac,
       };
     })
@@ -860,7 +865,7 @@ async function AllCampaignsTable({
                   <tr key={row.id} className={idx % 2 === 0 ? 'bg-white' : 'bg-evino-gray-50/50'}>
                     <td className="p-3 max-w-[300px]">
                       <Link
-                        href={`/${accountId}?campaign_id=${row.id}`}
+                        href={`/${accountId}/adset/${row.id}?since=${currentRange.since}&until=${currentRange.until}`}
                         className="font-medium text-evino-ink hover:text-evino-red hover:underline block truncate"
                         title={row.name}
                       >
@@ -1062,15 +1067,17 @@ async function AllCreativesTable({
   ]);
 
   // Investimento por criativo: casa (utm_campaign + utm_content) do Redshift com
-  // (campaign_name + ad_name) da Meta. Usar a campanha além do nome do criativo
-  // evita somar/duplicar o spend quando o mesmo criativo roda em + de 1 campanha.
+  // (adset_name + ad_name) da Meta. O utm_campaign do Looker/Redshift é, na verdade,
+  // o nome do conjunto de anúncios (adset), por isso casamos por adset_name e não
+  // campaign_name. Usar o adset além do nome do criativo evita somar/duplicar o
+  // spend quando o mesmo criativo roda em + de 1 conjunto.
   const norm = (s?: string) => (s || '').trim();
-  const spendKey = (campaign: string, creative: string) => `${norm(campaign)}|||${norm(creative)}`;
+  const spendKey = (adset: string, creative: string) => `${norm(adset)}|||${norm(creative)}`;
   const spendByContent = new Map<string, number>();
   for (const ins of adInsights) {
     const name = norm(ins.ad_name);
     if (!name) continue;
-    const key = spendKey(ins.campaign_name || '', name);
+    const key = spendKey(ins.adset_name || '', name);
     spendByContent.set(key, (spendByContent.get(key) || 0) + parseFloat(ins.spend || '0'));
   }
 
