@@ -1,6 +1,6 @@
 import { Suspense } from 'react';
 import Link from 'next/link';
-import { getInsights, getInsightsWithBreakdowns } from '@/lib/meta/insights';
+import { getInsights } from '@/lib/meta/insights';
 import { getCampaigns, getAds, getAdDetail, getAdSetsByCampaign } from '@/lib/meta/creative';
 import { MetricCard } from '@/components/cards/MetricCard';
 import { TimelineChart } from '@/components/charts/TimelineChart';
@@ -13,7 +13,7 @@ import { HierarchyFilters } from '@/components/HierarchyFilters';
 import { SegmentFilter } from '@/components/SegmentFilter';
 import { CreativeRangeSelector } from '@/components/creative/CreativeRangeSelector';
 import { saveReport } from '@/lib/supabase/reports';
-import { getOrdersByCampaign, getOrdersByCreative, getGrandCruOrdersByCampaign, getGrandCruOrdersByCreative, getOrdersByMonth, getOrdersByHour, getOrdersTotals, getOrdersTotalsAllChannels } from '@/lib/redshift/queries';
+import { getRevenueByCampaign, getRevenueByCreative, getRevenueByMonth, getRevenueByHour, getRevenueTotals, getGrandCruOrdersByCampaign, getGrandCruOrdersByCreative, getOrdersTotalsAllChannels } from '@/lib/redshift/queries';
 import { RevenueMonthlyCharts, type MonthlyChartPoint } from '@/components/charts/RevenueMonthlyCharts';
 import { HourlyRoasChart, type HourlyRoasPoint } from '@/components/charts/HourlyRoasChart';
 import { ResizableTable } from '@/components/ResizableTable';
@@ -133,14 +133,23 @@ export default async function AccountOverviewPage({ params, searchParams }: Over
         selectedAdSetId={adset_id}
       />
 
+      {!campaign_id && !isGrandCru && (
+        // Filtro de segmento (Ecom / Clube) — aplica a TODOS os gráficos e tabelas
+        <div className="flex items-center gap-3 flex-wrap">
+          <span className="text-xs font-bold text-evino-gray-400 uppercase tracking-wider">Segmento</span>
+          <SegmentFilter />
+        </div>
+      )}
+
       {!campaign_id ? (
         // VISÃO GERAL DA CONTA — todas campanhas e criativos
         <div className="space-y-6">
           <Suspense fallback={<ChartSkeleton />}>
-            {/* Gráficos de receita/ROAS/YoY: sempre últimos 6 meses, não seguem o filtro */}
+            {/* Gráficos de receita/ROAS/YoY: sempre últimos 6 meses, não seguem o filtro de datas */}
             <RevenueChartsSection
               accountId={adAccountId}
               isGrandCru={isGrandCru}
+              segment={segment}
             />
           </Suspense>
           <Suspense fallback={<ChartSkeleton />}>
@@ -149,13 +158,9 @@ export default async function AccountOverviewPage({ params, searchParams }: Over
               accountId={adAccountId}
               isGrandCru={isGrandCru}
               currentRange={{ since: currentSince, until: currentUntil }}
+              segment={segment}
             />
           </Suspense>
-          {/* Filtro de segmento (Ecom / Clube) — aplica às tabelas abaixo */}
-          <div className="flex items-center justify-between gap-3 flex-wrap">
-            <span className="text-xs font-bold text-evino-gray-400 uppercase tracking-wider">Segmento</span>
-            <SegmentFilter />
-          </div>
           <Suspense fallback={<TableSkeleton />}>
             <AllCampaignsTable
               accountId={adAccountId}
@@ -777,7 +782,7 @@ function getPrevPeriodColumn(
 
 // Classifica/filtra pelo segmento embutido no nome do conjunto de anúncios:
 // "Evino-Ecomm-…" (ecom) vs "Evino-Clube-…" (clube). segment vazio = todos.
-function matchesSegment(name: string, segment?: string): boolean {
+function matchesSegment(name: string | undefined, segment?: string): boolean {
   const seg = (segment || '').toLowerCase();
   if (seg !== 'ecom' && seg !== 'clube') return true;
   const n = (name || '').toLowerCase();
@@ -815,7 +820,7 @@ async function AllCampaignsTable({
     getInsights(accountId, { level: 'adset', timeRange: prevRange, paginate: true, limit: 500 }).catch(() => []),
     isGrandCru
       ? getGrandCruOrdersByCampaign(currentRange.since, currentRange.until).catch(() => [])
-      : getOrdersByCampaign(currentRange.since, currentRange.until).catch(() => []),
+      : getRevenueByCampaign(currentRange.since, currentRange.until, segment).catch(() => []),
   ]);
 
   const prevRoasByAdset = new Map<string, number>();
@@ -973,10 +978,15 @@ async function AllCampaignsTable({
 async function RevenueChartsSection({
   accountId,
   isGrandCru,
+  segment,
 }: {
   accountId: string;
   isGrandCru: boolean;
+  segment?: string;
 }) {
+  // Com segmento selecionado, puxamos os insights da Meta no nível adset (p/
+  // filtrar pelo nome do conjunto); sem segmento, no nível conta (mais leve).
+  const hasSegment = segment === 'ecom' || segment === 'clube';
   // Estes gráficos são fixos nos últimos 6 meses e NÃO seguem o filtro de datas.
   // Datas no fuso de São Paulo para casar com o filtro local do Redshift.
   const todayStr = spDateStr();
@@ -1001,19 +1011,25 @@ async function RevenueChartsSection({
   // Snapshot do dia atual (receita real LC + investimento Meta de hoje).
   const todayRange = { since: todayStr, until: todayStr };
 
+  const metaLevel = hasSegment ? 'adset' : 'account';
   const [monthlyInsights, rsMonthly, yoyRsMonthly, todayInsights, rsToday, rsTodayAllChannels] = await Promise.all([
-    getInsights(accountId, { level: 'account', timeRange: sixMonthRange, timeIncrement: 'monthly' }).catch(() => []),
-    !isGrandCru ? getOrdersByMonth(sixMonthRange.since, sixMonthRange.until).catch(() => []) : Promise.resolve([]),
-    !isGrandCru ? getOrdersByMonth(yoySince, yoyUntil).catch(() => []) : Promise.resolve([]),
-    getInsights(accountId, { level: 'account', timeRange: todayRange }).catch(() => []),
-    !isGrandCru ? getOrdersTotals(todayStr, todayStr).catch(() => ({ total_revenue: 0, total_orders: 0 })) : Promise.resolve({ total_revenue: 0, total_orders: 0 }),
+    getInsights(accountId, { level: metaLevel, timeRange: sixMonthRange, timeIncrement: 'monthly', paginate: hasSegment, limit: 500 }).catch(() => []),
+    !isGrandCru ? getRevenueByMonth(sixMonthRange.since, sixMonthRange.until, segment).catch(() => []) : Promise.resolve([]),
+    !isGrandCru ? getRevenueByMonth(yoySince, yoyUntil, segment).catch(() => []) : Promise.resolve([]),
+    getInsights(accountId, { level: metaLevel, timeRange: todayRange, paginate: hasSegment, limit: 500 }).catch(() => []),
+    !isGrandCru ? getRevenueTotals(todayStr, todayStr, segment).catch(() => ({ total_revenue: 0, total_orders: 0 })) : Promise.resolve({ total_revenue: 0, total_orders: 0 }),
     !isGrandCru ? getOrdersTotalsAllChannels(todayStr, todayStr).catch(() => 0) : Promise.resolve(0),
   ]);
 
   // Métricas de hoje: receita LC (Redshift) p/ Evino, receita Meta p/ Grand Cru.
-  const todayIns = todayInsights[0] || null;
-  const todaySpend = todayIns ? parseFloat(todayIns.spend || '0') : 0;
-  const todayMetaRevenue = todayIns ? parseActions(todayIns.action_values, 'purchase') : 0;
+  // Soma as linhas (1 no nível conta; N no nível adset, já filtradas por segmento).
+  let todaySpend = 0;
+  let todayMetaRevenue = 0;
+  for (const ins of todayInsights) {
+    if (!matchesSegment(ins.adset_name, segment)) continue;
+    todaySpend += parseFloat(ins.spend || '0');
+    todayMetaRevenue += parseActions(ins.action_values, 'purchase');
+  }
   const todayRevenue = isGrandCru ? todayMetaRevenue : rsToday.total_revenue;
   const todayRoas = todaySpend > 0 ? todayRevenue / todaySpend : 0;
   // Share de receita: Facebook / total de todos os canais (só Evino tem o dado LC).
@@ -1024,6 +1040,7 @@ async function RevenueChartsSection({
   const spendByMonth = new Map<string, number>();
   const metaRevenueByMonth = new Map<string, number>();
   for (const ins of monthlyInsights) {
+    if (!matchesSegment(ins.adset_name, segment)) continue;
     const mk = (ins.date_start || '').slice(0, 7);
     if (!mk) continue;
     spendByMonth.set(mk, (spendByMonth.get(mk) || 0) + parseFloat(ins.spend || '0'));
@@ -1098,23 +1115,34 @@ async function HourlyRoasSection({
   accountId,
   isGrandCru,
   currentRange,
+  segment,
 }: {
   accountId: string;
   isGrandCru: boolean;
   currentRange: { since: string; until: string };
+  segment?: string;
 }) {
   // Spend por hora (Meta, breakdown horário) + receita por hora (Redshift p/ Evino;
   // Meta p/ Grand Cru). Sem time_increment, a Meta já agrega o spend de cada hora
   // somando todas as datas do período — mesma lógica do getOrdersByHour no Redshift.
+  // Com segmento, puxa no nível adset (p/ filtrar pelo nome do conjunto).
+  const hasSegment = segment === 'ecom' || segment === 'clube';
   const [hourlyInsights, rsHours] = await Promise.all([
-    getInsightsWithBreakdowns(accountId, 'hourly', { timeRange: currentRange }, 'account').catch(() => []),
-    isGrandCru ? Promise.resolve([]) : getOrdersByHour(currentRange.since, currentRange.until).catch(() => []),
+    getInsights(accountId, {
+      level: hasSegment ? 'adset' : 'account',
+      timeRange: currentRange,
+      breakdowns: 'hourly_stats_aggregated_by_advertiser_time_zone',
+      paginate: hasSegment,
+      limit: 500,
+    }).catch(() => []),
+    isGrandCru ? Promise.resolve([]) : getRevenueByHour(currentRange.since, currentRange.until, segment).catch(() => []),
   ]);
 
   // Agrega spend (e receita Meta) por hora 0–23 a partir do bucket "HH:00:00 - HH:59:59".
   const spendByHour = new Map<number, number>();
   const metaRevenueByHour = new Map<number, number>();
   for (const ins of hourlyInsights) {
+    if (!matchesSegment(ins.adset_name, segment)) continue;
     const bucket = ins.hourly_stats_aggregated_by_advertiser_time_zone;
     if (!bucket) continue;
     const hour = parseInt(bucket.slice(0, 2));
@@ -1170,7 +1198,7 @@ async function AllCreativesTable({
   const [rsRows, adInsights] = await Promise.all([
     isGrandCru
       ? getGrandCruOrdersByCreative(currentRange.since, currentRange.until).catch(() => [])
-      : getOrdersByCreative(currentRange.since, currentRange.until).catch(() => []),
+      : getRevenueByCreative(currentRange.since, currentRange.until, segment).catch(() => []),
     isGrandCru
       ? Promise.resolve([])
       : getInsights(accountId, { level: 'ad', timeRange: currentRange, paginate: true, limit: 500 }).catch(() => []),
