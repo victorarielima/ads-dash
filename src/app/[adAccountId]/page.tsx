@@ -1156,6 +1156,11 @@ async function HourlyRoasSection({
     rsRevenueByHour.set(r.hour, r.total_revenue ?? 0);
   }
 
+  // Nº de dias do período (inclusivo) p/ calcular a média diária de receita por hora.
+  const sDate = new Date(currentRange.since + 'T00:00:00');
+  const uDate = new Date(currentRange.until + 'T00:00:00');
+  const numDays = Math.max(1, Math.round((uDate.getTime() - sDate.getTime()) / 86_400_000) + 1);
+
   const data: HourlyRoasPoint[] = Array.from({ length: 24 }, (_, hour) => {
     const spend = spendByHour.get(hour) || 0;
     const revenue = isGrandCru ? (metaRevenueByHour.get(hour) || 0) : (rsRevenueByHour.get(hour) || 0);
@@ -1165,6 +1170,7 @@ async function HourlyRoasSection({
       label: `${String(hour).padStart(2, '0')}h`,
       roas,
       revenue,
+      avgRevenue: revenue / numDays,
       spend,
     };
   });
