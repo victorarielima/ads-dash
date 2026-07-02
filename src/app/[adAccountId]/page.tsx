@@ -1275,7 +1275,7 @@ async function AllCreativesTable({
       <div className="px-5 py-4 border-b border-evino-gray-200 flex items-center gap-3">
         <div>
           <h3 className="font-display text-lg font-semibold text-evino-red">Criativos</h3>
-          <p className="text-xs text-evino-gray-500">{currentRange.since} até {currentRange.until} · Fonte: Redshift (last-click)</p>
+          <p className="text-xs text-evino-gray-500">{currentRange.since === currentRange.until ? currentRange.since : `${currentRange.since} até ${currentRange.until}`}</p>
         </div>
       </div>
       <ResizableTable className="overflow-x-auto">
