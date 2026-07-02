@@ -9,6 +9,7 @@ import { calculateDelta } from '@/lib/utils/delta';
 import { MetricCard } from '@/components/cards/MetricCard';
 import { ArrowLeft, Target, Award, Sparkles, AlertCircle, TrendingUp, Info } from 'lucide-react';
 import { clsx } from 'clsx';
+import { spDateStr } from '@/lib/utils/date';
 
 interface AdsetPageProps {
   params: Promise<{
@@ -27,12 +28,9 @@ export default async function AdsetDrilldownPage({ params, searchParams }: Adset
   const { adAccountId, adsetId } = await params;
   const { since, until } = await searchParams;
 
-  // Datas padrão
-  const today = new Date();
-  const defaultUntil = today.toISOString().split('T')[0];
-  const thirtyDaysAgo = new Date();
-  thirtyDaysAgo.setDate(today.getDate() - 29);
-  const defaultSince = thirtyDaysAgo.toISOString().split('T')[0];
+  // Datas padrão: dia de hoje (fuso de São Paulo, igual ao painel principal).
+  const defaultUntil = spDateStr();
+  const defaultSince = spDateStr();
 
   const currentSince = since || defaultSince;
   const currentUntil = until || defaultUntil;

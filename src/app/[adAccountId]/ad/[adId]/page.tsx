@@ -12,6 +12,7 @@ import { HeaderSkeleton, ChartSkeleton, TableSkeleton } from '@/components/Loadi
 import { formatCurrency, formatNumber, formatPercent } from '@/lib/utils/formatters';
 import { parseActions } from '@/lib/meta/actionTypes';
 import { ArrowLeft, Video, Image, Layers, ThumbsUp, MessageSquare, Share2, Award, Calendar, Globe, Monitor, Clock, ExternalLink } from 'lucide-react';
+import { spDateStr } from '@/lib/utils/date';
 
 interface AdDrilldownProps {
   params: Promise<{
@@ -30,12 +31,9 @@ export default async function AdDrilldownPage({ params, searchParams }: AdDrilld
   const { adAccountId, adId } = await params;
   const { since, until } = await searchParams;
 
-  // Datas padrão
-  const today = new Date();
-  const defaultUntil = today.toISOString().split('T')[0];
-  const thirtyDaysAgo = new Date();
-  thirtyDaysAgo.setDate(today.getDate() - 29);
-  const defaultSince = thirtyDaysAgo.toISOString().split('T')[0];
+  // Datas padrão: dia de hoje (fuso de São Paulo, igual ao painel principal).
+  const defaultUntil = spDateStr();
+  const defaultSince = spDateStr();
 
   const currentSince = since || defaultSince;
   const currentUntil = until || defaultUntil;

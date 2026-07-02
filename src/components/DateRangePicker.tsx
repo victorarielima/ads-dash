@@ -15,7 +15,7 @@ export function DateRangePicker() {
 
   // Determina a opção atual selecionada baseada nas datas da URL
   const getSelectedOption = () => {
-    if (!since || !until) return 'last_30d';
+    if (!since || !until) return 'today';
 
     const sDate = new Date(since + 'T00:00:00');
     const uDate = new Date(until + 'T00:00:00');
@@ -39,7 +39,7 @@ export function DateRangePicker() {
 
   // Rascunho local das datas personalizadas. Só viram URL (e disparam o reload
   // pesado) quando o usuário define início E fim e confirma — nunca a cada onChange.
-  const [draftSince, setDraftSince] = useState<string>(since || getOffsetDateStr(29));
+  const [draftSince, setDraftSince] = useState<string>(since || getOffsetDateStr(0));
   const [draftUntil, setDraftUntil] = useState<string>(until || getOffsetDateStr(0));
 
   // Sincroniza o preset ativo caso a URL mude externamente

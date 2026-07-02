@@ -44,10 +44,10 @@ export default async function AccountOverviewPage({ params, searchParams }: Over
   
   const { since, until, campaign_id, adset_id, creative_range, segment } = await searchParams;
 
-  // 1. Define as datas padrão (últimos 30 dias se ausente na URL).
+  // 1. Define as datas padrão (dia de hoje se ausente na URL).
   // Datas no fuso de São Paulo para casar com o filtro local do Redshift.
   const defaultUntil = spDateStr();
-  const defaultSince = spOffsetDateStr(29);
+  const defaultSince = spDateStr();
 
   const currentSince = since || defaultSince;
   const currentUntil = until || defaultUntil;
@@ -150,6 +150,7 @@ export default async function AccountOverviewPage({ params, searchParams }: Over
               accountId={adAccountId}
               isGrandCru={isGrandCru}
               segment={segment}
+              currentRange={{ since: currentSince, until: currentUntil }}
             />
           </Suspense>
           <Suspense fallback={<ChartSkeleton />}>
@@ -780,6 +781,27 @@ function getPrevPeriodColumn(
   return { show: false, label: '' };
 }
 
+// Rótulo do snapshot de receita/ROAS conforme o período selecionado.
+// `title` vai no cabeçalho do card; `suffix` no rótulo de cada métrica
+// (ex.: "Receita (hoje)"). Espelha os presets do DateRangePicker.
+function getPeriodSnapshotLabel(
+  since: string,
+  until: string,
+  todayStr: string
+): { title: string; suffix: string } {
+  const diffDays = Math.round(
+    (new Date(until + 'T00:00:00').getTime() - new Date(since + 'T00:00:00').getTime()) / 86_400_000
+  );
+
+  if (diffDays === 0 && since === todayStr) return { title: 'Hoje', suffix: 'hoje' };
+  if (diffDays === 0 && since === spOffsetDateStr(1)) return { title: 'Ontem', suffix: 'ontem' };
+  if (diffDays === 0) return { title: since, suffix: 'no dia' };
+  if (diffDays === 6 && until === todayStr) return { title: 'Últimos 7 dias', suffix: 'período' };
+  if (diffDays === 29 && until === todayStr) return { title: 'Últimos 30 dias', suffix: 'período' };
+  if (diffDays === 89 && until === todayStr) return { title: 'Últimos 90 dias', suffix: 'período' };
+  return { title: 'Período personalizado', suffix: 'período' };
+}
+
 // Classifica/filtra pelo segmento embutido no nome do conjunto de anúncios:
 // "Evino-Ecomm-…" (ecom) vs "Evino-Clube-…" (clube). segment vazio = todos.
 function matchesSegment(name: string | undefined, segment?: string): boolean {
@@ -979,10 +1001,12 @@ async function RevenueChartsSection({
   accountId,
   isGrandCru,
   segment,
+  currentRange,
 }: {
   accountId: string;
   isGrandCru: boolean;
   segment?: string;
+  currentRange: { since: string; until: string };
 }) {
   // Com segmento selecionado, puxamos os insights da Meta no nível adset (p/
   // filtrar pelo nome do conjunto); sem segmento, no nível conta (mais leve).
@@ -1008,33 +1032,33 @@ async function RevenueChartsSection({
     return d.toISOString().split('T')[0];
   })();
 
-  // Snapshot do dia atual (receita real LC + investimento Meta de hoje).
-  const todayRange = { since: todayStr, until: todayStr };
+  // Snapshot do período selecionado (receita real LC + investimento Meta do período).
+  const periodLabel = getPeriodSnapshotLabel(currentRange.since, currentRange.until, todayStr);
 
   const metaLevel = hasSegment ? 'adset' : 'account';
-  const [monthlyInsights, rsMonthly, yoyRsMonthly, todayInsights, rsToday, rsTodayAllChannels] = await Promise.all([
+  const [monthlyInsights, rsMonthly, yoyRsMonthly, periodInsights, rsPeriod, rsPeriodAllChannels] = await Promise.all([
     getInsights(accountId, { level: metaLevel, timeRange: sixMonthRange, timeIncrement: 'monthly', paginate: hasSegment, limit: 500 }).catch(() => []),
     !isGrandCru ? getRevenueByMonth(sixMonthRange.since, sixMonthRange.until, segment).catch(() => []) : Promise.resolve([]),
     !isGrandCru ? getRevenueByMonth(yoySince, yoyUntil, segment).catch(() => []) : Promise.resolve([]),
-    getInsights(accountId, { level: metaLevel, timeRange: todayRange, paginate: hasSegment, limit: 500 }).catch(() => []),
-    !isGrandCru ? getRevenueTotals(todayStr, todayStr, segment).catch(() => ({ total_revenue: 0, total_orders: 0 })) : Promise.resolve({ total_revenue: 0, total_orders: 0 }),
-    !isGrandCru ? getOrdersTotalsAllChannels(todayStr, todayStr).catch(() => 0) : Promise.resolve(0),
+    getInsights(accountId, { level: metaLevel, timeRange: currentRange, paginate: hasSegment, limit: 500 }).catch(() => []),
+    !isGrandCru ? getRevenueTotals(currentRange.since, currentRange.until, segment).catch(() => ({ total_revenue: 0, total_orders: 0 })) : Promise.resolve({ total_revenue: 0, total_orders: 0 }),
+    !isGrandCru ? getOrdersTotalsAllChannels(currentRange.since, currentRange.until).catch(() => 0) : Promise.resolve(0),
   ]);
 
-  // Métricas de hoje: receita LC (Redshift) p/ Evino, receita Meta p/ Grand Cru.
+  // Métricas do período: receita LC (Redshift) p/ Evino, receita Meta p/ Grand Cru.
   // Soma as linhas (1 no nível conta; N no nível adset, já filtradas por segmento).
-  let todaySpend = 0;
-  let todayMetaRevenue = 0;
-  for (const ins of todayInsights) {
+  let periodSpend = 0;
+  let periodMetaRevenue = 0;
+  for (const ins of periodInsights) {
     if (!matchesSegment(ins.adset_name, segment)) continue;
-    todaySpend += parseFloat(ins.spend || '0');
-    todayMetaRevenue += parseActions(ins.action_values, 'purchase');
+    periodSpend += parseFloat(ins.spend || '0');
+    periodMetaRevenue += parseActions(ins.action_values, 'purchase');
   }
-  const todayRevenue = isGrandCru ? todayMetaRevenue : rsToday.total_revenue;
-  const todayRoas = todaySpend > 0 ? todayRevenue / todaySpend : 0;
+  const periodRevenue = isGrandCru ? periodMetaRevenue : rsPeriod.total_revenue;
+  const periodRoas = periodSpend > 0 ? periodRevenue / periodSpend : 0;
   // Share de receita: Facebook / total de todos os canais (só Evino tem o dado LC).
-  const todayRevenueShare = !isGrandCru && rsTodayAllChannels > 0
-    ? (rsToday.total_revenue / rsTodayAllChannels) * 100
+  const periodRevenueShare = !isGrandCru && rsPeriodAllChannels > 0
+    ? (rsPeriod.total_revenue / rsPeriodAllChannels) * 100
     : null;
 
   const spendByMonth = new Map<string, number>();
@@ -1091,17 +1115,19 @@ async function RevenueChartsSection({
     <div className="space-y-4">
       <RevenueMonthlyCharts data={chartData} isGrandCru={isGrandCru} />
 
-      {/* Snapshot do dia atual — receita e ROAS especificamente de hoje */}
+      {/* Snapshot do período selecionado — receita e ROAS do filtro de datas */}
       <div className="bg-white border border-evino-gray-200 rounded-evino p-4 shadow-sm">
-        <h4 className="font-display text-sm font-semibold text-evino-ink mb-0.5">Hoje</h4>
+        <h4 className="font-display text-sm font-semibold text-evino-ink mb-0.5">{periodLabel.title}</h4>
         <p className="text-xs text-evino-gray-500 mb-3">
-          {isGrandCru ? 'Receita Meta Ads' : 'Receita LC (Redshift)'} e ROAS · {todayStr}
+          {currentRange.since === currentRange.until
+            ? currentRange.since
+            : `${currentRange.since} até ${currentRange.until}`}
         </p>
-        <div className={`grid gap-4 ${todayRevenueShare !== null ? 'grid-cols-2 lg:grid-cols-3' : 'grid-cols-2'}`}>
-          <MetricCard label="Receita (hoje)" value={formatCurrency(todayRevenue)} highlight />
-          <MetricCard label="ROAS (hoje)" value={`${todayRoas.toFixed(2)}x`} highlight />
-          {todayRevenueShare !== null && (
-            <MetricCard label="Share de Receita (hoje)" value={`${todayRevenueShare.toFixed(1)}%`} highlight />
+        <div className={`grid gap-4 ${periodRevenueShare !== null ? 'grid-cols-2 lg:grid-cols-3' : 'grid-cols-2'}`}>
+          <MetricCard label="Receita" value={formatCurrency(periodRevenue)} highlight />
+          <MetricCard label="ROAS" value={`${periodRoas.toFixed(2)}x`} highlight />
+          {periodRevenueShare !== null && (
+            <MetricCard label="Share de Receita" value={`${periodRevenueShare.toFixed(1)}%`} highlight />
           )}
         </div>
       </div>

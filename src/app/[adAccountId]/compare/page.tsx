@@ -4,6 +4,7 @@ import { getInsights } from '@/lib/meta/insights';
 import { CompareComponent } from '@/components/CompareComponent';
 import { TableSkeleton } from '@/components/LoadingSkeleton';
 import { parseActions } from '@/lib/meta/actionTypes';
+import { spDateStr } from '@/lib/utils/date';
 
 interface ComparePageProps {
   params: Promise<{
@@ -26,12 +27,9 @@ export default async function ComparePage({ params, searchParams }: ComparePageP
   
   const { since, until } = await searchParams;
 
-  // Datas padrão
-  const today = new Date();
-  const defaultUntil = today.toISOString().split('T')[0];
-  const thirtyDaysAgo = new Date();
-  thirtyDaysAgo.setDate(today.getDate() - 29);
-  const defaultSince = thirtyDaysAgo.toISOString().split('T')[0];
+  // Datas padrão: dia de hoje (fuso de São Paulo, igual ao painel principal).
+  const defaultUntil = spDateStr();
+  const defaultSince = spDateStr();
 
   const currentSince = since || defaultSince;
   const currentUntil = until || defaultUntil;

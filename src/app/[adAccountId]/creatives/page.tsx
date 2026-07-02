@@ -9,6 +9,7 @@ import { TableSkeleton } from '@/components/LoadingSkeleton';
 import { parseActions } from '@/lib/meta/actionTypes';
 import { HierarchyFilters } from '@/components/HierarchyFilters';
 import { CreativeRangeSelector } from '@/components/creative/CreativeRangeSelector';
+import { spDateStr } from '@/lib/utils/date';
 
 interface CreativesPageProps {
   params: Promise<{
@@ -34,12 +35,9 @@ export default async function CreativesPage({ params, searchParams }: CreativesP
   
   const { since, until, campaign_id, adset_id, creative_range } = await searchParams;
 
-  // 1. Datas padrão para o painel
-  const today = new Date();
-  const defaultUntil = today.toISOString().split('T')[0];
-  const thirtyDaysAgo = new Date();
-  thirtyDaysAgo.setDate(today.getDate() - 29);
-  const defaultSince = thirtyDaysAgo.toISOString().split('T')[0];
+  // 1. Datas padrão para o painel: dia de hoje (fuso de São Paulo).
+  const defaultUntil = spDateStr();
+  const defaultSince = spDateStr();
 
   const currentSince = since || defaultSince;
   const currentUntil = until || defaultUntil;
