@@ -109,10 +109,7 @@ export function RevenueMonthlyCharts({ data, isGrandCru }: RevenueMonthlyChartsP
 
       {/* ROAS Mensal */}
       <div className="bg-white border border-evino-gray-200 rounded-evino p-4 shadow-sm">
-        <h4 className="font-display text-sm font-semibold text-evino-ink mb-0.5">ROAS Mensal</h4>
-        <p className="text-xs text-evino-gray-500 mb-3">
-          {isGrandCru ? 'ROAS Meta Ads · todas as campanhas' : 'ROAS LC (Redshift) · todas as campanhas'}
-        </p>
+        <h4 className="font-display text-sm font-semibold text-evino-ink mb-3">ROAS Mensal</h4>
         <div className="h-[240px]">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={data} margin={{ top: 5, right: 8, left: 0, bottom: 5 }}>

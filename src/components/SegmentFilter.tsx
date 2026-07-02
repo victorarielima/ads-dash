@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useTransition } from 'react';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { Store, Wine } from 'lucide-react';
 
@@ -16,6 +16,7 @@ export function SegmentFilter() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const pathname = usePathname();
+  const [isPending, startTransition] = useTransition();
 
   const current = (searchParams.get('segment') || '').toLowerCase();
 
@@ -23,11 +24,16 @@ export function SegmentFilter() {
     const params = new URLSearchParams(searchParams.toString());
     if (value) params.set('segment', value);
     else params.delete('segment');
-    router.push(`${pathname}?${params.toString()}`);
+    // Além de trocar a URL, força o re-render dos Server Components para que os
+    // valores realmente mudem (o Router Cache pode servir o RSC antigo só na push).
+    startTransition(() => {
+      router.push(`${pathname}?${params.toString()}`);
+      router.refresh();
+    });
   };
 
   return (
-    <div className="inline-flex items-center gap-0.5 bg-white border border-evino-gray-200 rounded-evino p-0.5 shadow-sm">
+    <div className={`inline-flex items-center gap-0.5 bg-white border border-evino-gray-200 rounded-evino p-0.5 shadow-sm transition-opacity ${isPending ? 'opacity-60' : ''}`}>
       {OPTIONS.map(({ value, label, Icon }) => {
         const active = current === value;
         return (

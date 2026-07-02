@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useTransition } from 'react';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { Calendar } from 'lucide-react';
 import { spOffsetDateStr } from '@/lib/utils/date';
@@ -9,6 +9,17 @@ export function DateRangePicker() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const pathname = usePathname();
+  const [isPending, startTransition] = useTransition();
+
+  // Navega para a nova URL e força o re-render dos Server Components. Sem o
+  // refresh, o Router Cache do Next pode servir o RSC anterior e os valores
+  // (receita, ROAS, tabelas) não mudam ao trocar o período.
+  const navigate = (url: string) => {
+    startTransition(() => {
+      router.push(url);
+      router.refresh();
+    });
+  };
 
   const since = searchParams.get('since') || '';
   const until = searchParams.get('until') || '';
@@ -91,7 +102,7 @@ export function DateRangePicker() {
         return;
     }
 
-    router.push(`${pathname}?${params.toString()}`);
+    navigate(`${pathname}?${params.toString()}`);
   };
 
   // Só aplica (e recarrega) quando início e fim estão preenchidos e início <= fim.
@@ -103,13 +114,13 @@ export function DateRangePicker() {
     const params = new URLSearchParams(searchParams.toString());
     params.set('since', draftSince);
     params.set('until', draftUntil);
-    router.push(`${pathname}?${params.toString()}`);
+    navigate(`${pathname}?${params.toString()}`);
   };
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <div className="flex items-center gap-1.5 bg-white border border-evino-gray-200 rounded-evino px-3 py-1.5 shadow-sm text-sm text-evino-gray-700">
-        <Calendar className="w-4 h-4 text-evino-gray-400" />
+      <div className={`flex items-center gap-1.5 bg-white border border-evino-gray-200 rounded-evino px-3 py-1.5 shadow-sm text-sm text-evino-gray-700 transition-opacity ${isPending ? 'opacity-60' : ''}`}>
+        <Calendar className={`w-4 h-4 text-evino-gray-400 ${isPending ? 'animate-pulse' : ''}`} />
         <select
           value={activePreset}
           onChange={(e) => handlePresetChange(e.target.value)}
