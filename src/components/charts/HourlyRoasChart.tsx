@@ -59,9 +59,7 @@ export function HourlyRoasChart({ data, isGrandCru, rangeLabel }: HourlyRoasChar
   return (
     <div className="bg-white border border-evino-gray-200 rounded-evino p-4 shadow-sm">
       <h4 className="font-display text-sm font-semibold text-evino-ink mb-0.5">ROAS por Hora do Dia</h4>
-      <p className="text-xs text-evino-gray-500 mb-3">
-        {isGrandCru ? 'ROAS Meta Ads' : 'ROAS LC (Redshift)'} médio por hora · {rangeLabel}
-      </p>
+      <p className="text-xs text-evino-gray-500 mb-3">{rangeLabel}</p>
       <div className="h-[260px]">
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart data={data} margin={{ top: 5, right: 12, left: 0, bottom: 5 }}>

@@ -79,7 +79,7 @@ const TipYoy = ({ active, payload, label }: any) => {
   );
 };
 
-export function RevenueMonthlyCharts({ data, isGrandCru }: RevenueMonthlyChartsProps) {
+export function RevenueMonthlyCharts({ data }: RevenueMonthlyChartsProps) {
   if (!data || data.length === 0) return null;
 
   const yoyData = data.filter(d => d.yoyGrowth !== null);
@@ -90,10 +90,7 @@ export function RevenueMonthlyCharts({ data, isGrandCru }: RevenueMonthlyChartsP
     <div className={`grid ${gridClass} gap-4`}>
       {/* Receita Mensal */}
       <div className="bg-white border border-evino-gray-200 rounded-evino p-4 shadow-sm">
-        <h4 className="font-display text-sm font-semibold text-evino-ink mb-0.5">Receita Mensal</h4>
-        <p className="text-xs text-evino-gray-500 mb-3">
-          {isGrandCru ? 'Receita Meta Ads · todas as campanhas' : 'Receita LC (Redshift) · todas as campanhas'}
-        </p>
+        <h4 className="font-display text-sm font-semibold text-evino-ink mb-3">Receita Mensal</h4>
         <div className="h-[240px]">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={data} margin={{ top: 5, right: 8, left: 0, bottom: 5 }}>
@@ -130,8 +127,7 @@ export function RevenueMonthlyCharts({ data, isGrandCru }: RevenueMonthlyChartsP
       {/* Crescimento YoY */}
       {showYoy && (
         <div className="bg-white border border-evino-gray-200 rounded-evino p-4 shadow-sm">
-          <h4 className="font-display text-sm font-semibold text-evino-ink mb-0.5">Crescimento YoY</h4>
-          <p className="text-xs text-evino-gray-500 mb-3">Receita vs. mesmo mês do ano anterior</p>
+          <h4 className="font-display text-sm font-semibold text-evino-ink mb-3">Crescimento YoY</h4>
           <div className="h-[240px]">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={yoyData} margin={{ top: 5, right: 8, left: 0, bottom: 5 }}>
