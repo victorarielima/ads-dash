@@ -900,7 +900,7 @@ async function AllCampaignsTable({
       <div className="px-5 py-4 border-b border-evino-gray-200 flex items-center justify-between">
         <div>
           <h3 className="font-display text-lg font-semibold text-evino-ink">Campanhas</h3>
-          <p className="text-xs text-evino-gray-500">{currentRange.since} até {currentRange.until}</p>
+          <p className="text-xs text-evino-gray-500">{currentRange.since === currentRange.until ? currentRange.since : `${currentRange.since} até ${currentRange.until}`}</p>
         </div>
       </div>
       <ResizableTable className="overflow-x-auto">
@@ -1208,7 +1208,7 @@ async function HourlyRoasSection({
     <HourlyRoasChart
       data={data}
       isGrandCru={isGrandCru}
-      rangeLabel={`${currentRange.since} até ${currentRange.until}`}
+      rangeLabel={currentRange.since === currentRange.until ? currentRange.since : `${currentRange.since} até ${currentRange.until}`}
     />
   );
 }
